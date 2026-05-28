@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1"
+colored = "2"
 clap = { version = "4", features = ["derive"] }
 doi = "0.2"
 hex = "0.4"

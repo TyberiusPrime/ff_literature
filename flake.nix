@@ -50,7 +50,7 @@
             ];
             buildInputs = with pkgs; [
               openssl
-              poppler_utils
+              poppler-utils
             ];
             release = true;
             CARGO_PROFILE_RELEASE_debug = "0";
@@ -95,7 +95,7 @@
           # supply the specific rust version
           nativeBuildInputs = [
             bacon
-            pkgs.poppler_utils
+            pkgs.poppler-utils
             pkgs.openssl
             pkgs.pkg-config
             # pkgs.bash

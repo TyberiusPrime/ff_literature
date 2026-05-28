@@ -25,8 +25,13 @@ enum Command {
         #[arg(long)]
         doi: String,
     },
-    /// Full-text search; prints matching ./pdfs/<key>.pdf paths
-    Search { query: String },
+    /// Full-text search; prints matching ./pdfs/<key>.pdf paths with title and first author
+    Search {
+        query: String,
+        /// Show up to 3 matching text passages per result
+        #[arg(long)]
+        context: bool,
+    },
     /// Rebuild the full-text search index from ./pdfs/
     Reindex,
 }
@@ -36,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Scan => scan::scan()?,
         Command::Add { path, doi } => scan::add_with_doi(&path, &doi)?,
-        Command::Search { query } => search::search(&query)?,
+        Command::Search { query, context } => search::search(&query, context)?,
         Command::Reindex => search::reindex()?,
     }
     Ok(())
