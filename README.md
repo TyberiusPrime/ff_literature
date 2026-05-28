@@ -12,6 +12,10 @@ Full-text search via tantivy.
 
 No document without pdf.
 
+Vibe coded house plant software.
+
+It's mostly glue between existing things anyway.  
+
 ## Requirements
 
 - `pdftotext` (poppler) — in PATH
