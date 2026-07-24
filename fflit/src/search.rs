@@ -179,7 +179,9 @@ pub fn reindex() -> anyhow::Result<()> {
 }
 
 fn extract_text(path: &Path) -> Option<String> {
-    let output = std::process::Command::new("pdftotext")
+    let output = std::process::Command::new(
+        option_env!("NIX_PDF_TO_TEXT").unwrap_or("pdftotext")
+    )
         .args([path.to_str()?, "-"])
         .output()
         .ok()?;

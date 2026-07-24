@@ -37,6 +37,7 @@
         };
 
         bacon = pkgs.bacon;
+        NIX_PDF_TO_TEXT="${pkgs.poppler-utils}/bin/pdftotext";
 
       in
       rec {
@@ -44,7 +45,7 @@
         packages.ff_literature = (
           naersk-lib.buildPackage {
             pname = "ff_literature";
-            root = ./.;
+            root = ./fflit;
             nativeBuildInputs = with pkgs; [
               pkg-config
             ];
@@ -55,11 +56,11 @@
             release = true;
             CARGO_PROFILE_RELEASE_debug = "0";
             COMMIT_HASH = self.rev or (pkgs.lib.removeSuffix "-dirty" self.dirtyRev or "unknown-not-in-git");
-            NIX_RAPIDGZIP = "${pkgs.rapidgzip}/bin/rapidgzip";
+            NIX_PDF_TO_TEXT = "${pkgs.poppler-utils}/bin/pdftotext";
           }
         );
         packages.check = naersk-lib.buildPackage {
-          src = ./.;
+          src = ./fflit;
           mode = "check";
           name = "ff_literature";
           nativeBuildInputs = with pkgs; [
@@ -69,7 +70,7 @@
         packages.test = naersk-lib.buildPackage {
           # not using naersk test mode, it eats the binaries, we need that binary
           pname = "ff_literature";
-          root = ./.;
+          root = ./fflit;
           nativeBuildInputs = with pkgs; [
           ];
           buildInputs = with pkgs; [ ];
@@ -91,6 +92,7 @@
           # we only link with mold in our dev environment for build speed. CI can use the old school rust linker
           shellHook = ''
             export ff_literature_DIR="./lookup"
+            export NIX_PDF_TO_TEXT="${NIX_PDF_TO_TEXT}";
           '';
           # supply the specific rust version
           nativeBuildInputs = [

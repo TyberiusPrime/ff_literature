@@ -44,7 +44,9 @@ fn object_to_string(obj: &lopdf::Object) -> Option<String> {
 }
 
 fn extract_from_text(path: &Path) -> Result<String, FflitError> {
-    let output = std::process::Command::new("pdftotext")
+    let output = std::process::Command::new(
+        option_env!("NIX_PDF_TO_TEXT").unwrap_or("pdftotext")
+    )
         .args(["-l", "3", path.to_str().unwrap_or(""), "-"])
         .output()
         .map_err(|e| FflitError::PdfRead(format!("pdftotext failed: {e}")))?;
