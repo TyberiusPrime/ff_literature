@@ -19,11 +19,7 @@ pub struct BibDatabase {
 impl BibDatabase {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         if !path.exists() {
-            return Ok(Self {
-                entries: vec![],
-                doi_set: HashSet::new(),
-                sha256_set: HashSet::new(),
-            });
+            return Ok(Self::empty());
         }
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
@@ -67,6 +63,26 @@ impl BibDatabase {
             doi_set,
             sha256_set,
         })
+    }
+
+    pub fn empty() -> Self {
+        Self {
+            entries: vec![],
+            doi_set: HashSet::new(),
+            sha256_set: HashSet::new(),
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<&BibEntry> {
+        self.entries.iter().find(|e| e.key == key)
+    }
+
+    /// For "did you mean" hints on unknown citation keys.
+    pub fn find_ignore_case(&self, key: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|e| e.key.eq_ignore_ascii_case(key))
+            .map(|e| e.key.as_str())
     }
 
     pub fn contains_doi(&self, doi: &str) -> bool {

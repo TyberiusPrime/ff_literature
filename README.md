@@ -58,6 +58,19 @@ Full-text search. Prints matching `./pdfs/<key>.pdf` with title and first author
 `--context` adds up to 3 matching passages per result with query terms highlighted.
 
 ```
+fflit assemble <repository> <output.bibtex> [--pdf-dir DIR] paper.typ chapter.typ ...
+```
+Scan typst files for `@key` citations and collect the matching entries from
+`<repository>/literature.bibtex` into `<output.bibtex>`. With `--pdf-dir`, the
+cited `<repository>/pdfs/<key>.pdf` are copied there as well.
+
+Package specs (`@preview/...`), mail addresses, raw blocks and labels the
+document defines itself (`<fig:one>`) are not treated as citations.
+
+Unknown keys are reported as warnings and make fflit exit non-zero — the output
+files are still written. A cited entry without a pdf is a note only.
+
+```
 fflit reindex
 ```
 Rebuild the tantivy full-text index from scratch (needed after first use or schema changes).
