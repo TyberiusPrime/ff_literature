@@ -71,9 +71,37 @@ Unknown keys are reported as warnings and make fflit exit non-zero — the outpu
 files are still written. A cited entry without a pdf is a note only.
 
 ```
+fflit diff <a.bibtex> <b.bibtex> [--output missing.bibtex] [--include-uncertain]
+```
+Which entries of `a` are not in `b`? Either side may also be an fflit repository
+directory, in which case its `literature.bibtex` is used.
+
+Entries are matched by DOI first, then by normalized title (LaTeX accents,
+braces, case and punctuation are ignored). Everything else is scored by title
+word overlap, first author and year, and lands in one of two buckets:
+
+* **uncertain** — something over there looks like it, printed with the candidate
+  and a score. Truncated titles, subtitles, `Thomas S.` vs `Thomas`, an entry
+  whose citation key happens to exist on the other side. Your eyes, not mine.
+* **missing** — nothing in `b` resembles it.
+
+`--output` writes the missing entries as a bibtex file; `--include-uncertain`
+puts the uncertain ones in there too.
+
+```
 fflit reindex
+fflit reindex --tags-only
 ```
 Rebuild the tantivy full-text index from scratch (needed after first use or schema changes).
+
+`--tags-only` is the cheap variant for keywords. Tags are not managed by fflit —
+write a `keywords = {immunology, mouse}` field into `literature.bibtex` by hand,
+then run this to make them searchable. Only entries whose tags actually differ
+from the index are rewritten, so it costs one `pdftotext` per edited entry
+instead of one per paper, and nothing at all when there is nothing to do.
+
+Keywords are searched alongside title, authors and full text, and shown after
+each hit. Order and case in the field are not significant.
 
 ## Directory layout
 
@@ -92,7 +120,8 @@ Rebuild the tantivy full-text index from scratch (needed after first use or sche
 `AuthorYYYYWord` — first author family name, 4-digit year, first significant title word.
 Conflicts gain a suffix: `Smith2023Attentiona`, `Smith2023Attentionb`, …
 
-Each entry includes a `sha256` field for deduplication across renames.
+Each entry includes a `sha256` field for deduplication across renames. A
+hand-written `keywords` field is searchable after `fflit reindex --tags-only`.
 
 ## Building
 

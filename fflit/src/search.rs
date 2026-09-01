@@ -1,10 +1,11 @@
-use anyhow::Context;
+use anyhow::{bail, Context};
 use colored::Colorize;
+use tantivy::query::AllQuery;
 use std::path::{Path, PathBuf};
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
 use tantivy::schema::{Schema, SchemaBuilder, Value, STORED, STRING, TEXT};
-use tantivy::{Index, IndexWriter, TantivyDocument};
+use tantivy::{Index, IndexWriter, TantivyDocument, Term};
 
 pub struct SearchIndex {
     pub index: Index,
@@ -16,6 +17,7 @@ fn build_schema() -> Schema {
     b.add_text_field("bibkey", STRING | STORED);
     b.add_text_field("title", TEXT | STORED);
     b.add_text_field("authors", TEXT | STORED);
+    b.add_text_field("keywords", TEXT | STORED);
     b.add_text_field("fulltext", TEXT);
     // first ~5000 chars of extracted text, stored for context snippets
     b.add_text_field("preview", TEXT | STORED);
@@ -29,13 +31,20 @@ fn index_path() -> PathBuf {
 pub fn open_or_create() -> anyhow::Result<SearchIndex> {
     let path = index_path();
     std::fs::create_dir_all(&path)?;
-    let schema = build_schema();
     let index = if path.join("meta.json").exists() {
         Index::open_in_dir(&path).context("opening tantivy index")?
     } else {
-        Index::create_in_dir(&path, schema.clone()).context("creating tantivy index")?
+        Index::create_in_dir(&path, build_schema()).context("creating tantivy index")?
     };
+    // an index built by an older fflit has fewer fields than build_schema();
+    // go by what is actually on disk and degrade until the next reindex
+    let schema = index.schema();
     Ok(SearchIndex { index, schema })
+}
+
+/// Fields added after an index was first built are absent until `fflit reindex`.
+fn optional_field(schema: &Schema, name: &str) -> Option<tantivy::schema::Field> {
+    schema.get_field(name).ok()
 }
 
 pub fn add_document(
@@ -45,25 +54,142 @@ pub fn add_document(
     authors: &str,
     pdf_path: &Path,
 ) -> anyhow::Result<()> {
-    let fulltext = extract_text(pdf_path).unwrap_or_default();
-    let preview: String = fulltext.chars().take(5000).collect();
-
-    let bibkey_f = idx.schema.get_field("bibkey").unwrap();
-    let title_f = idx.schema.get_field("title").unwrap();
-    let authors_f = idx.schema.get_field("authors").unwrap();
-    let fulltext_f = idx.schema.get_field("fulltext").unwrap();
-    let preview_f = idx.schema.get_field("preview").unwrap();
-
+    // a freshly filed paper has no keywords yet; they are hand written into
+    // literature.bibtex and picked up by `fflit reindex --tags-only`
     let mut writer: IndexWriter = idx.index.writer(50_000_000)?;
-    let mut doc = TantivyDocument::default();
-    doc.add_text(bibkey_f, bibkey);
-    doc.add_text(title_f, title);
-    doc.add_text(authors_f, authors);
-    doc.add_text(fulltext_f, &fulltext);
-    doc.add_text(preview_f, &preview);
+    let doc = build_document(idx, bibkey, title, authors, "", pdf_path);
     writer.add_document(doc)?;
     writer.commit()?;
     Ok(())
+}
+
+/// Bring the indexed keywords in line with `literature.bibtex`, touching only
+/// the documents whose tags actually changed. Everything else — full text above
+/// all — is left alone, so this costs one `pdftotext` per edited entry rather
+/// than one per paper.
+pub fn reindex_tags() -> anyhow::Result<()> {
+    let idx = open_or_create()?;
+    let Some(keywords_f) = optional_field(&idx.schema, "keywords") else {
+        bail!("this index predates keyword search — run `fflit reindex` once");
+    };
+    let bibkey_f = idx.schema.get_field("bibkey").unwrap();
+    let title_f = idx.schema.get_field("title").unwrap();
+    let authors_f = idx.schema.get_field("authors").unwrap();
+
+    let db = crate::bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
+
+    let reader = idx.index.reader()?;
+    let searcher = reader.searcher();
+    let all = searcher.search(&AllQuery, &TopDocs::with_limit(searcher.num_docs().max(1) as usize))?;
+
+    let mut stale: Vec<(String, String, String, String)> = Vec::new();
+    let mut indexed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_score, addr) in all {
+        let doc: TantivyDocument = searcher.doc(addr)?;
+        let key = doc.get_first(bibkey_f).and_then(|v| v.as_str()).unwrap_or("");
+        if key.is_empty() {
+            continue;
+        }
+        indexed.insert(key.to_string());
+        let Some(entry) = db.get(key) else { continue };
+        let wanted = entry.keywords();
+        let have = crate::bibtex::split_keywords(
+            doc.get_first(keywords_f).and_then(|v| v.as_str()).unwrap_or(""),
+        );
+        if same_tags(&wanted, &have) {
+            continue;
+        }
+        stale.push((
+            key.to_string(),
+            doc.get_first(title_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            doc.get_first(authors_f).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            wanted.join(", "),
+        ));
+    }
+
+    // an entry whose pdf is on disk but has no document is a gap a tags-only
+    // pass cannot close; one without a pdf is simply not indexable
+    let unindexed = db
+        .entries
+        .iter()
+        .filter(|e| !indexed.contains(&e.key))
+        .filter(|e| Path::new(&format!("./pdfs/{}.pdf", e.key)).exists())
+        .count();
+
+    if stale.is_empty() {
+        eprintln!("{} documents, tags already up to date", indexed.len());
+        report_unindexed(unindexed);
+        return Ok(());
+    }
+
+    let mut writer: IndexWriter = idx.index.writer(50_000_000)?;
+    let mut updated = 0usize;
+    for (key, title, authors, keywords) in &stale {
+        let pdf = PathBuf::from(format!("./pdfs/{key}.pdf"));
+        if !pdf.exists() {
+            eprintln!("  {}: no ./pdfs/{key}.pdf, skipped", "warning".yellow().bold());
+            continue;
+        }
+        writer.delete_term(Term::from_field_text(bibkey_f, key));
+        writer.add_document(build_document(&idx, key, title, authors, keywords, &pdf))?;
+        eprintln!(
+            "  {key} [{}]",
+            match keywords.is_empty() {
+                true => "no tags".to_string(),
+                false => keywords.clone(),
+            }
+        );
+        updated += 1;
+    }
+    writer.commit()?;
+
+    eprintln!("{updated} of {} documents updated", indexed.len());
+    report_unindexed(unindexed);
+    Ok(())
+}
+
+fn report_unindexed(n: usize) {
+    if n == 0 {
+        return;
+    }
+    eprintln!(
+        "{}: {} pdf(s) are not in the index at all — run a full `fflit reindex`",
+        "note".yellow(),
+        n
+    );
+}
+
+/// Order and case of the keywords field are not meaningful.
+fn same_tags(a: &[String], b: &[String]) -> bool {
+    let norm = |v: &[String]| {
+        let mut v: Vec<String> = v.iter().map(|t| t.to_lowercase()).collect();
+        v.sort();
+        v
+    };
+    norm(a) == norm(b)
+}
+
+fn build_document(
+    idx: &SearchIndex,
+    bibkey: &str,
+    title: &str,
+    authors: &str,
+    keywords: &str,
+    pdf_path: &Path,
+) -> TantivyDocument {
+    let fulltext = extract_text(pdf_path).unwrap_or_default();
+    let preview: String = fulltext.chars().take(5000).collect();
+
+    let mut doc = TantivyDocument::default();
+    doc.add_text(idx.schema.get_field("bibkey").unwrap(), bibkey);
+    doc.add_text(idx.schema.get_field("title").unwrap(), title);
+    doc.add_text(idx.schema.get_field("authors").unwrap(), authors);
+    doc.add_text(idx.schema.get_field("fulltext").unwrap(), &fulltext);
+    doc.add_text(idx.schema.get_field("preview").unwrap(), &preview);
+    if let Some(f) = optional_field(&idx.schema, "keywords") {
+        doc.add_text(f, keywords);
+    }
+    doc
 }
 
 pub fn search(query_str: &str, show_context: bool) -> anyhow::Result<()> {
@@ -77,8 +203,10 @@ pub fn search(query_str: &str, show_context: bool) -> anyhow::Result<()> {
     let bibkey_f = idx.schema.get_field("bibkey").unwrap();
     let preview_f = idx.schema.get_field("preview").unwrap();
 
-    let query_parser =
-        QueryParser::for_index(&idx.index, vec![title_f, authors_f, fulltext_f]);
+    let keywords_f = optional_field(&idx.schema, "keywords");
+    let mut query_fields = vec![title_f, authors_f, fulltext_f];
+    query_fields.extend(keywords_f);
+    let query_parser = QueryParser::for_index(&idx.index, query_fields);
     let query = query_parser
         .parse_query(query_str)
         .context("invalid query syntax")?;
@@ -100,11 +228,20 @@ pub fn search(query_str: &str, show_context: bool) -> anyhow::Result<()> {
         }
         first = false;
 
+        let tags = keywords_f
+            .and_then(|f| doc.get_first(f))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
         println!(
-            "{}  {} — {}",
+            "{}  {} — {}{}",
             format!("./pdfs/{key}.pdf").cyan(),
             title.bold(),
-            first_family.yellow()
+            first_family.yellow(),
+            match tags.is_empty() {
+                true => String::new(),
+                false => format!("  [{}]", tags.green()),
+            }
         );
 
         if show_context {
@@ -131,17 +268,19 @@ pub fn reindex() -> anyhow::Result<()> {
     let bibkey_f = schema.get_field("bibkey").unwrap();
     let title_f = schema.get_field("title").unwrap();
     let authors_f = schema.get_field("authors").unwrap();
+    let keywords_f = schema.get_field("keywords").unwrap();
     let fulltext_f = schema.get_field("fulltext").unwrap();
     let preview_f = schema.get_field("preview").unwrap();
 
     let db = crate::bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
-    let meta: std::collections::HashMap<&str, (&str, &str)> = db
+    let meta: std::collections::HashMap<&str, (&str, &str, &str)> = db
         .entries
         .iter()
         .map(|e| {
-            let title = e.fields.iter().find(|(k, _)| k == "title").map(|(_, v)| v.as_str()).unwrap_or("");
-            let authors = e.fields.iter().find(|(k, _)| k == "author").map(|(_, v)| v.as_str()).unwrap_or("");
-            (e.key.as_str(), (title, authors))
+            let title = e.field("title").unwrap_or("");
+            let authors = e.field("author").unwrap_or("");
+            let keywords = e.field("keywords").unwrap_or("");
+            (e.key.as_str(), (title, authors, keywords))
         })
         .collect();
 
@@ -158,7 +297,7 @@ pub fn reindex() -> anyhow::Result<()> {
         .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("pdf"))
     {
         let bibkey = entry.path().file_stem().and_then(|s| s.to_str()).unwrap_or("unknown");
-        let (title, authors) = meta.get(bibkey).copied().unwrap_or(("", ""));
+        let (title, authors, keywords) = meta.get(bibkey).copied().unwrap_or(("", "", ""));
         let fulltext = extract_text(entry.path()).unwrap_or_default();
         let preview: String = fulltext.chars().take(5000).collect();
 
@@ -166,6 +305,7 @@ pub fn reindex() -> anyhow::Result<()> {
         doc.add_text(bibkey_f, bibkey);
         doc.add_text(title_f, title);
         doc.add_text(authors_f, authors);
+        doc.add_text(keywords_f, keywords);
         doc.add_text(fulltext_f, &fulltext);
         doc.add_text(preview_f, &preview);
         writer.add_document(doc)?;

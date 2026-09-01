@@ -1,6 +1,7 @@
 mod assemble;
 mod bibtex;
 mod crossref;
+mod diff;
 mod error;
 mod pdf;
 mod scan;
@@ -34,7 +35,24 @@ enum Command {
         context: bool,
     },
     /// Rebuild the full-text search index from ./pdfs/
-    Reindex,
+    Reindex {
+        /// only refresh the keywords from literature.bibtex, leave the text alone
+        #[arg(long)]
+        tags_only: bool,
+    },
+    /// Report the entries of one bibtex that are missing from another
+    Diff {
+        /// bibtex file (or fflit repository) to take entries from
+        a: PathBuf,
+        /// bibtex file (or fflit repository) to look them up in
+        b: PathBuf,
+        /// write the missing entries to this bibtex file
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// put the uncertain entries into --output as well
+        #[arg(long)]
+        include_uncertain: bool,
+    },
     /// Collect the references cited by typst documents into a standalone bibtex (+ pdfs)
     Assemble {
         /// fflit repository to pull entries from (the directory holding literature.bibtex)
@@ -56,7 +74,16 @@ fn main() -> anyhow::Result<()> {
         Command::Scan => scan::scan()?,
         Command::Add { path, doi } => scan::add_with_doi(&path, &doi)?,
         Command::Search { query, context } => search::search(&query, context)?,
-        Command::Reindex => search::reindex()?,
+        Command::Reindex { tags_only } => match tags_only {
+            true => search::reindex_tags()?,
+            false => search::reindex()?,
+        },
+        Command::Diff {
+            a,
+            b,
+            output,
+            include_uncertain,
+        } => diff::diff(&a, &b, output.as_deref(), include_uncertain)?,
         Command::Assemble {
             repository,
             output,

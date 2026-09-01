@@ -10,6 +10,30 @@ pub struct BibEntry {
     pub fields: Vec<(String, String)>,
 }
 
+impl BibEntry {
+    /// Field lookup, case insensitive in the field name as bibtex is.
+    pub fn field(&self, name: &str) -> Option<&str> {
+        self.fields
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The `keywords` field, split on commas.
+    pub fn keywords(&self) -> Vec<String> {
+        split_keywords(self.field("keywords").unwrap_or_default())
+    }
+}
+
+/// bibtex has no formal syntax here; comma separated is what everyone uses.
+pub fn split_keywords(s: &str) -> Vec<String> {
+    s.split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 pub struct BibDatabase {
     pub entries: Vec<BibEntry>,
     doi_set: HashSet<String>,
@@ -24,7 +48,7 @@ impl BibDatabase {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("reading {}", path.display()))?;
         let bibtex = Bibtex::parse(&content)
-            .map_err(|e| anyhow::anyhow!("bibtex parse error: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("parsing {}: {:?}", path.display(), e))?;
 
         let mut entries = Vec::new();
         let mut doi_set = HashSet::new();
@@ -164,7 +188,7 @@ fn ascii_name(s: &str) -> String {
     }
 }
 
-const STOP_WORDS: &[&str] = &[
+pub const STOP_WORDS: &[&str] = &[
     "a", "an", "the", "of", "in", "on", "for", "with", "to", "at", "by", "from", "and", "or",
     "is", "are", "was", "were", "be", "been", "that", "this", "these", "those", "it", "its",
     "via", "into", "over", "under", "toward", "using",
@@ -202,7 +226,30 @@ fn field_order_key(f: &str) -> u8 {
         "pages" => 7,
         "publisher" => 8,
         "abstract" => 9,
-        "sha256" => 10,
+        "keywords" => 10,
+        "sha256" => 11,
         _ => 50,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keywords_are_split_on_commas() {
+        let entry = BibEntry {
+            entry_type: "article".into(),
+            key: "Smith2020Deep".into(),
+            fields: vec![("Keywords".into(), " mouse ,, immunology ".into())],
+        };
+        assert_eq!(entry.keywords(), vec!["mouse", "immunology"]);
+
+        let untagged = BibEntry {
+            entry_type: "article".into(),
+            key: "Smith2020Deep".into(),
+            fields: vec![("title".into(), "T".into())],
+        };
+        assert!(untagged.keywords().is_empty());
     }
 }
