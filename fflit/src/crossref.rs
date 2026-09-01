@@ -1,3 +1,4 @@
+use crate::metadata::{Author, WorkMetadata};
 use anyhow::Context;
 use regex::Regex;
 use std::sync::OnceLock;
@@ -8,34 +9,13 @@ fn tag_regex() -> &'static Regex {
     TAG_RE.get_or_init(|| Regex::new(r"<[^>]+>").unwrap())
 }
 
-pub struct WorkMetadata {
-    pub doi: String,
-    pub title: String,
-    pub authors: Vec<Author>,
-    pub year: Option<u32>,
-    pub entry_type: String,
-    pub container_title: Option<String>,
-    pub volume: Option<String>,
-    pub issue: Option<String>,
-    pub pages: Option<String>,
-    pub publisher: Option<String>,
-    pub abstract_text: Option<String>,
-}
-
-pub struct Author {
-    pub family: Option<String>,
-    pub given: Option<String>,
-}
+const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
 
 pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
     let url = format!("https://api.crossref.org/works/{}", doi_str);
-    let client = reqwest::blocking::Client::new();
-    let response: serde_json::Value = client
+    let response: serde_json::Value = reqwest::blocking::Client::new()
         .get(&url)
-        .header(
-            "User-Agent",
-            "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)",
-        )
+        .header("User-Agent", USER_AGENT)
         .send()
         .with_context(|| format!("HTTP request failed for DOI {doi_str}"))?
         .error_for_status()
@@ -43,8 +23,33 @@ pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
         .json()
         .context("failed to parse CrossRef JSON")?;
 
-    let msg = &response["message"];
+    Ok(parse_work(&response["message"]))
+}
 
+/// Free text bibliographic search: how a pdf that never states its DOI can
+/// still be identified. Best matches first, as CrossRef ranks them.
+pub fn search(query: &str, rows: usize) -> anyhow::Result<Vec<WorkMetadata>> {
+    let response: serde_json::Value = reqwest::blocking::Client::new()
+        .get("https://api.crossref.org/works")
+        .header("User-Agent", USER_AGENT)
+        .query(&[
+            ("query.bibliographic", query),
+            ("rows", &rows.to_string()),
+        ])
+        .send()
+        .context("HTTP request failed for CrossRef search")?
+        .error_for_status()
+        .context("CrossRef returned an error for the search")?
+        .json()
+        .context("failed to parse CrossRef JSON")?;
+
+    Ok(response["message"]["items"]
+        .as_array()
+        .map(|items| items.iter().map(parse_work).collect())
+        .unwrap_or_default())
+}
+
+fn parse_work(msg: &serde_json::Value) -> WorkMetadata {
     let title = msg["title"]
         .as_array()
         .and_then(|a| a.first())
@@ -88,8 +93,8 @@ pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
         .as_str()
         .map(|s| tag_regex().replace_all(s, "").into_owned());
 
-    Ok(WorkMetadata {
-        doi: doi_str.to_string(),
+    WorkMetadata {
+        doi: msg["DOI"].as_str().unwrap_or_default().to_string(),
         title,
         authors,
         year,
@@ -100,7 +105,7 @@ pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
         pages,
         publisher,
         abstract_text,
-    })
+    }
 }
 
 fn map_type(t: &str) -> &'static str {

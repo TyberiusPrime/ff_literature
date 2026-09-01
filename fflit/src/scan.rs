@@ -1,5 +1,6 @@
-use crate::{bibtex, crossref, pdf, search};
+use crate::{bibtex, discover, metadata, pdf, search};
 use anyhow::Context;
+use colored::Colorize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
@@ -51,36 +52,29 @@ fn process_pdf(
         return Ok(());
     }
 
-    // 2. DOI
-    let doi_str = match doi_override {
-        Some(d) => normalize_doi(d),
-        None => match pdf::extract_doi(path) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("  no DOI found ({e}) — moving to ./failed_pdfs/");
-                move_file(path, "./failed_pdfs")?;
-                return Ok(());
+    // 2. What paper is this?
+    let meta = match identify(path, doi_override, db) {
+        Identified::Work { meta, how } => {
+            eprintln!("  {how}");
+            meta
+        }
+        Identified::Duplicate { doi } => {
+            eprintln!("  duplicate DOI {doi} — moving to ./duplicates/");
+            move_file(path, "./duplicates")?;
+            return Ok(());
+        }
+        Identified::Unknown { why, guess } => {
+            eprintln!("  {why} — moving to ./failed_pdfs/");
+            if let Some(g) = guess {
+                eprintln!("  {g}");
             }
-        },
-    };
-
-    if db.contains_doi(&doi_str) {
-        eprintln!("  duplicate DOI {doi_str} — moving to ./duplicates/");
-        move_file(path, "./duplicates")?;
-        return Ok(());
-    }
-
-    // 3. CrossRef metadata
-    let meta = match crossref::fetch(&doi_str) {
-        Ok(m) => m,
-        Err(e) => {
-            eprintln!("  metadata fetch failed ({e}) — moving to ./failed_pdfs/");
             move_file(path, "./failed_pdfs")?;
             return Ok(());
         }
     };
+    let doi_str = meta.doi.clone();
 
-    // 4. BibTeX key
+    // 3. BibTeX key
     let first_family = meta
         .authors
         .first()
@@ -89,7 +83,7 @@ fn process_pdf(
     let year = meta.year.unwrap_or(0);
     let key = db.generate_key(first_family, year, &meta.title);
 
-    // 5. Build fields in canonical order
+    // 4. Build fields in canonical order
     let mut fields: Vec<(String, String)> = Vec::new();
     fields.push(("author".into(), format_authors(&meta.authors)));
     fields.push(("title".into(), meta.title.clone()));
@@ -122,12 +116,12 @@ fn process_pdf(
     }
     fields.push(("sha256".into(), sha));
 
-    // 6. Move PDF into place
+    // 5. Move PDF into place
     let dest = PathBuf::from(format!("./pdfs/{}.pdf", key));
     std::fs::rename(path, &dest)
         .with_context(|| format!("moving {} to {}", path.display(), dest.display()))?;
 
-    // 7. Add to database + index
+    // 6. Add to database + index
     db.add(bibtex::BibEntry {
         entry_type: meta.entry_type.clone(),
         key: key.clone(),
@@ -144,6 +138,117 @@ fn process_pdf(
 
     eprintln!("  added {doi_str} → ./pdfs/{key}.pdf");
     Ok(())
+}
+
+/// The outcome of working out what a pdf is.
+enum Identified {
+    Work { meta: metadata::WorkMetadata, how: String },
+    Duplicate { doi: String },
+    Unknown { why: String, guess: Option<String> },
+}
+
+/// DOI printed in the file → DOI found in its text → asking CrossRef what the
+/// title page is. Anything the file did not state about itself gets checked
+/// against the title page before it is believed.
+fn identify(
+    path: &Path,
+    doi_override: Option<&str>,
+    db: &bibtex::BibDatabase,
+) -> Identified {
+    if let Some(doi) = doi_override {
+        let doi = normalize_doi(doi);
+        if db.contains_doi(&doi) {
+            return Identified::Duplicate { doi };
+        }
+        return match metadata::fetch(&doi) {
+            Ok(meta) => Identified::Work { meta, how: format!("doi {doi} (given)") },
+            Err(e) => Identified::Unknown { why: format!("metadata fetch failed ({e})"), guess: None },
+        };
+    }
+
+    // the title page is both a source of DOIs and the yardstick for everything
+    // that is not printed in the file itself
+    let front = pdf::page_text(path, 1, 1).unwrap_or_default();
+
+    let mut rejected: Option<String> = None;
+    match pdf::extract_doi(path) {
+        Ok(hit) => {
+            if db.contains_doi(&hit.doi) {
+                return Identified::Duplicate { doi: hit.doi };
+            }
+            match metadata::fetch(&hit.doi) {
+                Ok(meta) => {
+                    if hit.trusted || discover::confirms(&meta, &front) {
+                        let how = format!("doi {} ({})", hit.doi, hit.source);
+                        return Identified::Work { meta, how };
+                    }
+                    // found in the body and it describes someone else's paper
+                    rejected = Some(format!(
+                        "{}: {} from {} looks like a citation, not this paper",
+                        "note".yellow(),
+                        hit.doi,
+                        hit.source
+                    ));
+                }
+                Err(e) => {
+                    rejected = Some(format!("{}: {} did not resolve ({e})", "note".yellow(), hit.doi));
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    if let Some(msg) = &rejected {
+        eprintln!("  {msg}");
+    }
+
+    // 3. no usable DOI in the file: ask what this title page is
+    let candidate = match discover::by_title_page(&front, pdf::info_title(path).as_deref()) {
+        Ok(c) => c,
+        Err(e) => {
+            return Identified::Unknown { why: format!("no DOI in the pdf, and the search failed ({e})"), guess: None };
+        }
+    };
+
+    let Some(candidate) = candidate else {
+        return Identified::Unknown { why: "no DOI found, and no match on the title page".into(), guess: None };
+    };
+
+    if db.contains_doi(&candidate.meta.doi) {
+        return Identified::Duplicate { doi: candidate.meta.doi };
+    }
+
+    if discover::accepted(&candidate) {
+        let how = format!(
+            "doi {} (title page, {:.0}% match to \"{}\")",
+            candidate.meta.doi,
+            candidate.score * 100.0,
+            truncate(&candidate.meta.title, 60)
+        );
+        return Identified::Work { meta: candidate.meta, how };
+    }
+
+    // close enough to be worth a human glance, not close enough to file
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file.pdf");
+    Identified::Unknown {
+        why: "no DOI found, and the best title match is not convincing".into(),
+        guess: Some(format!(
+            "{}: {:.0}% {} \"{}\" — fflit add ./failed_pdfs/{} --doi {}",
+            "guess".yellow(),
+            candidate.score * 100.0,
+            candidate.meta.doi.cyan(),
+            truncate(&candidate.meta.title, 60),
+            name,
+            candidate.meta.doi
+        )),
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.chars().count() <= max {
+        true => flat,
+        false => flat.chars().take(max - 1).collect::<String>() + "…",
+    }
 }
 
 fn sha256_file(path: &Path) -> anyhow::Result<String> {
@@ -169,7 +274,7 @@ fn ensure_dirs() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn format_authors(authors: &[crossref::Author]) -> String {
+pub fn format_authors(authors: &[metadata::Author]) -> String {
     authors
         .iter()
         .map(|a| match (&a.family, &a.given) {

@@ -3,8 +3,8 @@
 Personal literature 'manager'. 
 
 * Scans an `incoming/` drop folder
-* extracts DOIs from PDFs
-* fetches metadata from CrossRef 
+* works out what each PDF is — DOI, arXiv id, or by asking about its title page
+* fetches metadata from CrossRef or DataCite 
 * renames/moves files to `pdfs/<BibKey>.pdf`
 * maintains a sorted `literature.bibtex`. 
 
@@ -19,7 +19,7 @@ It's mostly glue between existing things anyway.
 ## Requirements
 
 - `pdftotext` (poppler) — in PATH
-- Network access to `api.crossref.org`
+- Network access to `api.crossref.org` and `api.datacite.org`
 
 With the Nix flake: `nix develop` puts everything in scope.
 
@@ -40,10 +40,44 @@ fflit scan
 ```
 Process every PDF in `./incoming/`. For each file:
 1. SHA-256 checked against `literature.bibtex` — duplicate goes to `duplicates/`
-2. DOI extracted from PDF metadata, then from first 3 pages of text
-3. No DOI → `failed_pdfs/`
-4. Metadata fetched from CrossRef; fetch failure → `failed_pdfs/`
-5. File moved to `pdfs/<Author><Year><Word>.pdf` and entry appended to `literature.bibtex`
+2. Identified (see below); failure → `failed_pdfs/`
+3. Metadata fetched from CrossRef, or DataCite for what CrossRef does not
+   register (arXiv, Zenodo); fetch failure → `failed_pdfs/`
+4. File moved to `pdfs/<Author><Year><Word>.pdf` and entry appended to `literature.bibtex`
+
+### How a PDF is identified
+
+In order, stopping at the first that works:
+
+1. **DOI in the info dictionary** — any key whose name mentions doi, then
+   `Subject`/`Keywords`/`Title`.
+2. **DOI in the XMP packet** — `prism:doi` or `dc:identifier`. This is where
+   most publishers actually put it, PLOS and Elsevier among them.
+3. **DOI on page 1.** An announced one (`doi:…`, `https://doi.org/…`) beats a
+   bare match, because the announced one is the paper's own rather than the
+   journal's boilerplate.
+4. **arXiv id on page 1** → `10.48550/arXiv.<id>`, resolved through DataCite.
+   Both the old (`hep-th/9901001`) and new (`1706.03762`) schemes.
+5. **DOI on pages 2-3.**
+6. **DOI anywhere else in the document.** This one is *not* believed on its
+   own — a DOI in the body is usually a reference to somebody else's paper —
+   so the metadata it buys has to describe the title page before it is used.
+7. **The title page itself.** The title is read off the page (skipping running
+   heads, download stamps and licence lines), CrossRef is asked what work that
+   is, and the answer is only accepted if nearly all of its title is on the
+   page. Corroborating the first author's name there lowers the bar; a title of
+   one or two words never identifies anything.
+
+Whatever is not identified goes to `failed_pdfs/`. If a search candidate was
+close but not convincing, it is printed as a guess, with the `fflit add` line
+to run if you agree with it:
+
+```
+processing: ./incoming/scan_0042.pdf
+  note: 10.1038/nature14539 from body text looks like a citation, not this paper
+  no DOI found, and the best title match is not convincing — moving to ./failed_pdfs/
+  guess: 71% 10.1234/abc "Seasonal wobbling in zebrafish" — fflit add ./failed_pdfs/scan_0042.pdf --doi 10.1234/abc
+```
 
 ```
 fflit add path/to/paper.pdf --doi 10.xxxx/xxxxx

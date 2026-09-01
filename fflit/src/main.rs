@@ -1,11 +1,15 @@
 mod assemble;
 mod bibtex;
 mod crossref;
+mod datacite;
 mod diff;
+mod discover;
 mod error;
+mod metadata;
 mod pdf;
 mod scan;
 mod search;
+mod text;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
