@@ -32,6 +32,7 @@ pub fn diff(
     let index = Index::build(&b.entries);
 
     let mut matched_doi = 0usize;
+    let mut matched_isbn = 0usize;
     let mut matched_title = 0usize;
     let mut uncertain: Vec<(&BibEntry, Vec<Candidate>)> = Vec::new();
     let mut missing: Vec<&BibEntry> = Vec::new();
@@ -39,6 +40,7 @@ pub fn diff(
     for entry in &a.entries {
         match classify(entry, &b, &index) {
             Verdict::Matched(Reason::Doi) => matched_doi += 1,
+            Verdict::Matched(Reason::Isbn) => matched_isbn += 1,
             Verdict::Matched(Reason::Title) => matched_title += 1,
             Verdict::Uncertain(cands) => uncertain.push((entry, cands)),
             Verdict::Missing => missing.push(entry),
@@ -51,6 +53,7 @@ pub fn diff(
         a.entries.len(),
         b.entries.len(),
         matched_doi,
+        matched_isbn,
         matched_title,
         &uncertain,
         &missing,
@@ -100,6 +103,7 @@ fn resolve(path: &Path) -> anyhow::Result<PathBuf> {
 
 enum Reason {
     Doi,
+    Isbn,
     Title,
 }
 
@@ -120,6 +124,12 @@ fn classify(entry: &BibEntry, b: &BibDatabase, index: &Index) -> Verdict {
     if let Some(doi) = entry.field("doi") {
         if b.contains_doi(doi) {
             return Verdict::Matched(Reason::Doi);
+        }
+    }
+    // books are identified by isbn rather than doi
+    if let Some(isbn) = entry.field("isbn") {
+        if b.contains_isbn(isbn) {
+            return Verdict::Matched(Reason::Isbn);
         }
     }
 
@@ -283,6 +293,7 @@ fn report(
     a_len: usize,
     b_len: usize,
     matched_doi: usize,
+    matched_isbn: usize,
     matched_title: usize,
     uncertain: &[(&BibEntry, Vec<Candidate>)],
     missing: &[&BibEntry],
@@ -324,9 +335,10 @@ fn report(
     }
 
     eprintln!(
-        "\n{} matched ({} by doi, {} by title), {} uncertain, {} missing",
-        matched_doi + matched_title,
+        "\n{} matched ({} by doi, {} by isbn, {} by title), {} uncertain, {} missing",
+        matched_doi + matched_isbn + matched_title,
         matched_doi,
+        matched_isbn,
         matched_title,
         uncertain.len(),
         missing.len()
@@ -388,6 +400,13 @@ mod tests {
         let a = entry("Smith2020Deep", &[("doi", "10.1/ABC"), ("title", "Deep nets")]);
         let b = entry("smith_deep_2020", &[("doi", "https://doi.org/10.1/abc"), ("title", "Something else entirely")]);
         assert!(matches!(verdict(&a, &[b]), Verdict::Matched(Reason::Doi)));
+    }
+
+    #[test]
+    fn books_match_on_isbn_however_it_is_written() {
+        let a = entry("Buffalo2015Bioinformatics", &[("isbn", "9781449367374"), ("title", "Bioinformatics Data Skills")]);
+        let b = entry("buffalo_bioinf", &[("isbn", "978-1-4493-6737-4"), ("title", "Bioinformatics data skills: reproducible research")]);
+        assert!(matches!(verdict(&a, &[b]), Verdict::Matched(Reason::Isbn)));
     }
 
     #[test]

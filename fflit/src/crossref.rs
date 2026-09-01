@@ -49,6 +49,37 @@ pub fn search(query: &str, rows: usize) -> anyhow::Result<Vec<WorkMetadata>> {
         .unwrap_or_default())
 }
 
+/// Look a book up by ISBN. Returns `None` when CrossRef knows the ISBN only
+/// through the chapters of an edited volume: a chapter record would describe
+/// the wrong thing for a whole-book pdf.
+pub fn fetch_isbn(isbn13: &str) -> anyhow::Result<Option<WorkMetadata>> {
+    let response: serde_json::Value = reqwest::blocking::Client::new()
+        .get("https://api.crossref.org/works")
+        .header("User-Agent", USER_AGENT)
+        .query(&[
+            ("filter", format!("isbn:{isbn13}").as_str()),
+            ("rows", "20"),
+        ])
+        .send()
+        .with_context(|| format!("HTTP request failed for ISBN {isbn13}"))?
+        .error_for_status()
+        .with_context(|| format!("CrossRef returned an error for ISBN {isbn13}"))?
+        .json()
+        .context("failed to parse CrossRef JSON")?;
+
+    let Some(items) = response["message"]["items"].as_array() else {
+        return Ok(None);
+    };
+    Ok(items
+        .iter()
+        .find(|it| is_whole_book(it["type"].as_str().unwrap_or("")))
+        .map(parse_work))
+}
+
+fn is_whole_book(t: &str) -> bool {
+    matches!(t, "book" | "monograph" | "edited-book" | "reference-book" | "book-set")
+}
+
 fn parse_work(msg: &serde_json::Value) -> WorkMetadata {
     let title = msg["title"]
         .as_array()
@@ -95,6 +126,11 @@ fn parse_work(msg: &serde_json::Value) -> WorkMetadata {
 
     WorkMetadata {
         doi: msg["DOI"].as_str().unwrap_or_default().to_string(),
+        isbn: msg["ISBN"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .and_then(crate::isbn::normalize),
         title,
         authors,
         year,
@@ -113,9 +149,23 @@ fn map_type(t: &str) -> &'static str {
         "journal-article" => "article",
         "proceedings-article" => "inproceedings",
         "book-chapter" => "incollection",
-        "book" => "book",
+        "book" | "monograph" | "edited-book" | "reference-book" | "book-set" => "book",
         "dissertation" | "thesis" => "phdthesis",
         "report" | "report-component" => "techreport",
         _ => "misc",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chapter_is_not_the_book() {
+        assert!(is_whole_book("monograph"));
+        assert!(is_whole_book("book"));
+        assert!(is_whole_book("edited-book"));
+        assert!(!is_whole_book("book-chapter"));
+        assert!(!is_whole_book("journal-article"));
     }
 }

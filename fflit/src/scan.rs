@@ -19,7 +19,7 @@ pub fn scan() -> anyhow::Result<()> {
 
     for path in pdfs {
         eprintln!("processing: {}", path.display());
-        match process_pdf(&path, None, &mut db, &idx) {
+        match process_pdf(&path, None, None, &mut db, &idx) {
             Ok(()) => {}
             Err(e) => eprintln!("  error: {e}"),
         }
@@ -29,11 +29,12 @@ pub fn scan() -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn add_with_doi(path: &Path, doi: &str) -> anyhow::Result<()> {
+/// Manually file a pdf whose identifier fflit could not work out itself.
+pub fn add_manually(path: &Path, doi: Option<&str>, isbn: Option<&str>) -> anyhow::Result<()> {
     ensure_dirs()?;
     let mut db = bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
     let idx = search::open_or_create()?;
-    process_pdf(path, Some(doi), &mut db, &idx)?;
+    process_pdf(path, doi, isbn, &mut db, &idx)?;
     db.write(Path::new("./literature.bibtex"))?;
     Ok(())
 }
@@ -41,6 +42,7 @@ pub fn add_with_doi(path: &Path, doi: &str) -> anyhow::Result<()> {
 fn process_pdf(
     path: &Path,
     doi_override: Option<&str>,
+    isbn_override: Option<&str>,
     db: &mut bibtex::BibDatabase,
     idx: &search::SearchIndex,
 ) -> anyhow::Result<()> {
@@ -53,13 +55,13 @@ fn process_pdf(
     }
 
     // 2. What paper is this?
-    let meta = match identify(path, doi_override, db) {
+    let meta = match identify(path, doi_override, isbn_override, db) {
         Identified::Work { meta, how } => {
             eprintln!("  {how}");
             meta
         }
-        Identified::Duplicate { doi } => {
-            eprintln!("  duplicate DOI {doi} — moving to ./duplicates/");
+        Identified::Duplicate { what } => {
+            eprintln!("  duplicate {what} — moving to ./duplicates/");
             move_file(path, "./duplicates")?;
             return Ok(());
         }
@@ -90,7 +92,12 @@ fn process_pdf(
     if let Some(y) = meta.year {
         fields.push(("year".into(), y.to_string()));
     }
-    fields.push(("doi".into(), doi_str.clone()));
+    if !doi_str.is_empty() {
+        fields.push(("doi".into(), doi_str.clone()));
+    }
+    if let Some(i) = &meta.isbn {
+        fields.push(("isbn".into(), i.clone()));
+    }
 
     let ct_key = match meta.entry_type.as_str() {
         "inproceedings" | "incollection" => "booktitle",
@@ -136,85 +143,111 @@ fn process_pdf(
         .join(", ");
     search::add_document(idx, &key, &meta.title, &authors_str, &dest)?;
 
-    eprintln!("  added {doi_str} → ./pdfs/{key}.pdf");
+    eprintln!("  added → ./pdfs/{key}.pdf");
     Ok(())
 }
 
 /// The outcome of working out what a pdf is.
 enum Identified {
     Work { meta: metadata::WorkMetadata, how: String },
-    Duplicate { doi: String },
+    Duplicate { what: String },
     Unknown { why: String, guess: Option<String> },
 }
 
-/// DOI printed in the file → DOI found in its text → asking CrossRef what the
-/// title page is. Anything the file did not state about itself gets checked
-/// against the title page before it is believed.
-fn identify(
-    path: &Path,
-    doi_override: Option<&str>,
-    db: &bibtex::BibDatabase,
-) -> Identified {
+/// Identifier printed in the file → ISBN on its copyright page → a DOI from
+/// deeper in the document → asking CrossRef what the title page is. Anything
+/// the file did not state about itself gets checked before it is believed.
+fn identify(path: &Path, doi_override: Option<&str>, isbn_override: Option<&str>, db: &bibtex::BibDatabase) -> Identified {
     if let Some(doi) = doi_override {
         let doi = normalize_doi(doi);
         if db.contains_doi(&doi) {
-            return Identified::Duplicate { doi };
+            return Identified::Duplicate { what: format!("DOI {doi}") };
         }
         return match metadata::fetch(&doi) {
             Ok(meta) => Identified::Work { meta, how: format!("doi {doi} (given)") },
             Err(e) => Identified::Unknown { why: format!("metadata fetch failed ({e})"), guess: None },
         };
     }
-
-    // the title page is both a source of DOIs and the yardstick for everything
-    // that is not printed in the file itself
-    let front = pdf::page_text(path, 1, 1).unwrap_or_default();
-
-    let mut rejected: Option<String> = None;
-    match pdf::extract_doi(path) {
-        Ok(hit) => {
-            if db.contains_doi(&hit.doi) {
-                return Identified::Duplicate { doi: hit.doi };
-            }
-            match metadata::fetch(&hit.doi) {
-                Ok(meta) => {
-                    if hit.trusted || discover::confirms(&meta, &front) {
-                        let how = format!("doi {} ({})", hit.doi, hit.source);
-                        return Identified::Work { meta, how };
-                    }
-                    // found in the body and it describes someone else's paper
-                    rejected = Some(format!(
-                        "{}: {} from {} looks like a citation, not this paper",
-                        "note".yellow(),
-                        hit.doi,
-                        hit.source
-                    ));
-                }
-                Err(e) => {
-                    rejected = Some(format!("{}: {} did not resolve ({e})", "note".yellow(), hit.doi));
-                }
-            }
+    if let Some(raw) = isbn_override {
+        let Some(isbn) = crate::isbn::normalize(raw) else {
+            return Identified::Unknown { why: format!("{raw} is not a valid ISBN"), guess: None };
+        };
+        if db.contains_isbn(&isbn) {
+            return Identified::Duplicate { what: format!("ISBN {isbn}") };
         }
-        Err(_) => {}
-    }
-    if let Some(msg) = &rejected {
-        eprintln!("  {msg}");
+        return match metadata::fetch_isbn(&isbn) {
+            Ok(meta) => Identified::Work { meta, how: format!("isbn {isbn} (given)") },
+            Err(e) => Identified::Unknown { why: format!("metadata fetch failed ({e})"), guess: None },
+        };
     }
 
-    // 3. no usable DOI in the file: ask what this title page is
+    // the title page is both a source of identifiers and the yardstick for
+    // everything that is not printed in the file itself
+    let front = pdf::page_text(path, 1, 1).unwrap_or_default();
+    let doi_hit = pdf::extract_doi(path).ok();
+
+    // 1. a DOI the document states about itself
+    if let Some(hit) = doi_hit.as_ref().filter(|h| h.trusted) {
+        if db.contains_doi(&hit.doi) {
+            return Identified::Duplicate { what: format!("DOI {}", hit.doi) };
+        }
+        match metadata::fetch(&hit.doi) {
+            Ok(meta) => {
+                return Identified::Work { meta, how: format!("doi {} ({})", hit.doi, hit.source) }
+            }
+            Err(e) => eprintln!("  {}: {} did not resolve ({e})", "note".yellow(), hit.doi),
+        }
+    }
+
+    // 2. an ISBN on the copyright page — a book identifies itself this way
+    for isbn in crate::isbn::find_all(&pdf::front_matter_text(path)) {
+        if db.contains_isbn(&isbn) {
+            return Identified::Duplicate { what: format!("ISBN {isbn}") };
+        }
+        match metadata::fetch_isbn(&isbn) {
+            Ok(mut meta) => {
+                // record the identifier that actually found it, even when the
+                // registry lists a different edition
+                meta.isbn.get_or_insert_with(|| isbn.clone());
+                return Identified::Work { meta, how: format!("isbn {isbn} (front matter)") };
+            }
+            Err(e) => eprintln!("  {}: isbn {isbn} did not resolve ({e})", "note".yellow()),
+        }
+    }
+
+    // 3. a DOI from the body, believed only if it describes the title page
+    if let Some(hit) = doi_hit.as_ref().filter(|h| !h.trusted) {
+        if db.contains_doi(&hit.doi) {
+            return Identified::Duplicate { what: format!("DOI {}", hit.doi) };
+        }
+        match metadata::fetch(&hit.doi) {
+            Ok(meta) if discover::confirms(&meta, &front) => {
+                return Identified::Work { meta, how: format!("doi {} ({})", hit.doi, hit.source) }
+            }
+            Ok(_) => eprintln!(
+                "  {}: {} from {} looks like a citation, not this paper",
+                "note".yellow(),
+                hit.doi,
+                hit.source
+            ),
+            Err(e) => eprintln!("  {}: {} did not resolve ({e})", "note".yellow(), hit.doi),
+        }
+    }
+
+    // 4. no identifier in the file: ask what this title page is
     let candidate = match discover::by_title_page(&front, pdf::info_title(path).as_deref()) {
         Ok(c) => c,
         Err(e) => {
-            return Identified::Unknown { why: format!("no DOI in the pdf, and the search failed ({e})"), guess: None };
+            return Identified::Unknown { why: format!("no identifier in the pdf, and the search failed ({e})"), guess: None }
         }
     };
 
     let Some(candidate) = candidate else {
-        return Identified::Unknown { why: "no DOI found, and no match on the title page".into(), guess: None };
+        return Identified::Unknown { why: "no identifier found, and no match on the title page".into(), guess: None };
     };
 
     if db.contains_doi(&candidate.meta.doi) {
-        return Identified::Duplicate { doi: candidate.meta.doi };
+        return Identified::Duplicate { what: format!("DOI {}", candidate.meta.doi) };
     }
 
     if discover::accepted(&candidate) {
@@ -230,7 +263,7 @@ fn identify(
     // close enough to be worth a human glance, not close enough to file
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file.pdf");
     Identified::Unknown {
-        why: "no DOI found, and the best title match is not convincing".into(),
+        why: "no identifier found, and the best title match is not convincing".into(),
         guess: Some(format!(
             "{}: {:.0}% {} \"{}\" — fflit add ./failed_pdfs/{} --doi {}",
             "guess".yellow(),

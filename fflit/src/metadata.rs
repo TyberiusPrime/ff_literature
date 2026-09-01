@@ -4,11 +4,13 @@
 //! collects — arXiv preprints above all — is registered with DataCite instead,
 //! so a DOI that CrossRef does not know is not yet a dead end.
 
-use crate::{crossref, datacite};
+use crate::{crossref, datacite, openlibrary};
 
 #[derive(Clone)]
 pub struct WorkMetadata {
+    /// empty when the work has no DOI — a book known only by its ISBN
     pub doi: String,
+    pub isbn: Option<String>,
     pub title: String,
     pub authors: Vec<Author>,
     pub year: Option<u32>,
@@ -37,6 +39,20 @@ pub fn fetch(doi: &str) -> anyhow::Result<WorkMetadata> {
         Ok(meta) => Ok(meta),
         Err(crossref_err) => datacite::fetch(doi).map_err(|datacite_err| {
             anyhow::anyhow!("{crossref_err}; datacite also failed: {datacite_err}")
+        }),
+    }
+}
+
+/// Resolve an ISBN. CrossRef has the academic presses and gives us a DOI as
+/// well; everything else comes from OpenLibrary.
+pub fn fetch_isbn(isbn13: &str) -> anyhow::Result<WorkMetadata> {
+    match crossref::fetch_isbn(isbn13) {
+        Ok(Some(meta)) => Ok(meta),
+        // no record, or only the individual chapters of an edited volume, which
+        // do not describe the book in hand
+        Ok(None) => openlibrary::fetch(isbn13),
+        Err(crossref_err) => openlibrary::fetch(isbn13).map_err(|ol_err| {
+            anyhow::anyhow!("{crossref_err}; openlibrary also failed: {ol_err}")
         }),
     }
 }

@@ -37,6 +37,7 @@ pub fn split_keywords(s: &str) -> Vec<String> {
 pub struct BibDatabase {
     pub entries: Vec<BibEntry>,
     doi_set: HashSet<String>,
+    isbn_set: HashSet<String>,
     sha256_set: HashSet<String>,
 }
 
@@ -52,6 +53,7 @@ impl BibDatabase {
 
         let mut entries = Vec::new();
         let mut doi_set = HashSet::new();
+        let mut isbn_set = HashSet::new();
         let mut sha256_set = HashSet::new();
 
         for bib in bibtex.bibliographies() {
@@ -67,6 +69,10 @@ impl BibDatabase {
                 match k.to_lowercase().as_str() {
                     "doi" => {
                         doi_set.insert(normalize_doi(v));
+                    }
+                    "isbn" => {
+                        // stored however it was printed, compared as digits
+                        isbn_set.extend(crate::isbn::normalize(v));
                     }
                     "sha256" => {
                         sha256_set.insert(v.clone());
@@ -85,6 +91,7 @@ impl BibDatabase {
         Ok(Self {
             entries,
             doi_set,
+            isbn_set,
             sha256_set,
         })
     }
@@ -93,6 +100,7 @@ impl BibDatabase {
         Self {
             entries: vec![],
             doi_set: HashSet::new(),
+            isbn_set: HashSet::new(),
             sha256_set: HashSet::new(),
         }
     }
@@ -110,7 +118,11 @@ impl BibDatabase {
     }
 
     pub fn contains_doi(&self, doi: &str) -> bool {
-        self.doi_set.contains(&normalize_doi(doi))
+        !doi.is_empty() && self.doi_set.contains(&normalize_doi(doi))
+    }
+
+    pub fn contains_isbn(&self, isbn: &str) -> bool {
+        crate::isbn::normalize(isbn).is_some_and(|i| self.isbn_set.contains(&i))
     }
 
     pub fn contains_sha256(&self, hash: &str) -> bool {
@@ -143,6 +155,9 @@ impl BibDatabase {
             match k.to_lowercase().as_str() {
                 "doi" => {
                     self.doi_set.insert(normalize_doi(v));
+                }
+                "isbn" => {
+                    self.isbn_set.extend(crate::isbn::normalize(v));
                 }
                 "sha256" => {
                     self.sha256_set.insert(v.clone());
@@ -219,15 +234,16 @@ fn field_order_key(f: &str) -> u8 {
         "title" => 1,
         "year" => 2,
         "doi" => 3,
-        "journal" => 4,
-        "booktitle" => 4,
-        "volume" => 5,
-        "number" => 6,
-        "pages" => 7,
-        "publisher" => 8,
-        "abstract" => 9,
-        "keywords" => 10,
-        "sha256" => 11,
+        "isbn" => 4,
+        "journal" => 5,
+        "booktitle" => 5,
+        "volume" => 6,
+        "number" => 7,
+        "pages" => 8,
+        "publisher" => 9,
+        "abstract" => 10,
+        "keywords" => 11,
+        "sha256" => 12,
         _ => 50,
     }
 }
@@ -235,6 +251,32 @@ fn field_order_key(f: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn isbns_match_however_they_are_written() {
+        let mut db = BibDatabase::empty();
+        db.add(BibEntry {
+            entry_type: "book".into(),
+            key: "Buffalo2015".into(),
+            fields: vec![("isbn".into(), "978-1-4493-6737-4".into())],
+        });
+        assert!(db.contains_isbn("9781449367374"));
+        assert!(db.contains_isbn("978 1 4493 6737 4"));
+        assert!(!db.contains_isbn("9780596520687"));
+        // not an isbn at all, so not a match
+        assert!(!db.contains_isbn("garbage"));
+    }
+
+    #[test]
+    fn an_empty_doi_matches_nothing() {
+        let mut db = BibDatabase::empty();
+        db.add(BibEntry {
+            entry_type: "book".into(),
+            key: "Buffalo2015".into(),
+            fields: vec![("isbn".into(), "9781449367374".into())],
+        });
+        assert!(!db.contains_doi(""));
+    }
 
     #[test]
     fn keywords_are_split_on_commas() {

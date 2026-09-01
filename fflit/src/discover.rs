@@ -180,6 +180,7 @@ mod tests {
     fn work(title: &str, authors: &[&str]) -> WorkMetadata {
         WorkMetadata {
             doi: "10.1/x".into(),
+            isbn: None,
             title: title.into(),
             authors: authors
                 .iter()

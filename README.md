@@ -3,8 +3,8 @@
 Personal literature 'manager'. 
 
 * Scans an `incoming/` drop folder
-* works out what each PDF is — DOI, arXiv id, or by asking about its title page
-* fetches metadata from CrossRef or DataCite 
+* works out what each PDF is — DOI, arXiv id, ISBN, or by asking about its title page
+* fetches metadata from CrossRef, DataCite or OpenLibrary 
 * renames/moves files to `pdfs/<BibKey>.pdf`
 * maintains a sorted `literature.bibtex`. 
 
@@ -19,7 +19,7 @@ It's mostly glue between existing things anyway.
 ## Requirements
 
 - `pdftotext` (poppler) — in PATH
-- Network access to `api.crossref.org` and `api.datacite.org`
+- Network access to `api.crossref.org`, `api.datacite.org` and `openlibrary.org`
 
 With the Nix flake: `nix develop` puts everything in scope.
 
@@ -41,8 +41,9 @@ fflit scan
 Process every PDF in `./incoming/`. For each file:
 1. SHA-256 checked against `literature.bibtex` — duplicate goes to `duplicates/`
 2. Identified (see below); failure → `failed_pdfs/`
-3. Metadata fetched from CrossRef, or DataCite for what CrossRef does not
-   register (arXiv, Zenodo); fetch failure → `failed_pdfs/`
+3. Metadata fetched from CrossRef, DataCite for what CrossRef does not register
+   (arXiv, Zenodo), or OpenLibrary for books with no DOI; fetch failure →
+   `failed_pdfs/`
 4. File moved to `pdfs/<Author><Year><Word>.pdf` and entry appended to `literature.bibtex`
 
 ### How a PDF is identified
@@ -59,10 +60,16 @@ In order, stopping at the first that works:
 4. **arXiv id on page 1** → `10.48550/arXiv.<id>`, resolved through DataCite.
    Both the old (`hep-th/9901001`) and new (`1706.03762`) schemes.
 5. **DOI on pages 2-3.**
-6. **DOI anywhere else in the document.** This one is *not* believed on its
+6. **ISBN in the front matter** (pages 1-8 — a book prints it on the copyright
+   page, not the cover). Only labelled ISBNs with a valid check digit count, so
+   the LCCN and the phone number on the same page are not mistaken for one.
+   Resolved through CrossRef, which has the academic presses and yields a DOI as
+   well; failing that through OpenLibrary. Several ISBNs on a page (paperback,
+   hardback, ebook) are tried in the order printed.
+7. **DOI anywhere else in the document.** This one is *not* believed on its
    own — a DOI in the body is usually a reference to somebody else's paper —
    so the metadata it buys has to describe the title page before it is used.
-7. **The title page itself.** The title is read off the page (skipping running
+8. **The title page itself.** The title is read off the page (skipping running
    heads, download stamps and licence lines), CrossRef is asked what work that
    is, and the answer is only accepted if nearly all of its title is on the
    page. Corroborating the first author's name there lowers the bar; a title of
@@ -81,8 +88,9 @@ processing: ./incoming/scan_0042.pdf
 
 ```
 fflit add path/to/paper.pdf --doi 10.xxxx/xxxxx
+fflit add path/to/book.pdf --isbn 978-0-262-03384-8
 ```
-Manually file a PDF when DOI extraction fails.
+Manually file a PDF when identification fails. ISBN-10 is accepted and converted.
 
 ```
 fflit search "query terms"
@@ -149,12 +157,37 @@ each hit. Order and case in the field are not significant.
 └── search_index/      # tantivy index (do not edit)
 ```
 
+## Books
+
+Academic publishers register DOIs for books and chapters — Springer, Elsevier,
+OUP, CUP, the university presses — and those come in through the DOI paths like
+anything else. Technical and trade publishers do not, and neither does most of
+what was printed before DOIs existed; those are identified by ISBN and get an
+`isbn` field where an article would have a `doi`:
+
+```bibtex
+@book{Buffalo2015Bioinformatics,
+  author = {Buffalo, Vince},
+  title = {Bioinformatics Data Skills: Reproducible and Robust Research with Open Source Tools},
+  year = {2015},
+  isbn = {9781449367374},
+  publisher = {O'Reilly Media, Incorporated},
+  sha256 = {62f83c632d545e3bf9fcea93614de372dd925f1a7d7c740b2a2b0e0aadc7c1d5},
+}
+```
+
+A book CrossRef does know gets both fields. ISBNs are stored as plain 13 digits:
+correct hyphenation depends on the registration group ranges, and a plausible
+looking but wrong grouping is worse than none. ISBN-10s are converted on the way
+in, so the same book found under either form is recognised as a duplicate.
+
 ## BibTeX key format
 
 `AuthorYYYYWord` — first author family name, 4-digit year, first significant title word.
 Conflicts gain a suffix: `Smith2023Attentiona`, `Smith2023Attentionb`, …
 
-Each entry includes a `sha256` field for deduplication across renames. A
+Each entry includes a `sha256` field for deduplication across renames; entries
+are also deduplicated by DOI and by ISBN. A
 hand-written `keywords` field is searchable after `fflit reindex --tags-only`.
 
 ## Building

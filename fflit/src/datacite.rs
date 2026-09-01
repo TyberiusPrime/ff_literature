@@ -48,6 +48,7 @@ fn parse(attr: &serde_json::Value, fallback_doi: &str) -> WorkMetadata {
 
     WorkMetadata {
         doi: attr["doi"].as_str().unwrap_or(fallback_doi).to_string(),
+        isbn: None,
         title,
         authors,
         year,

@@ -5,7 +5,9 @@ mod datacite;
 mod diff;
 mod discover;
 mod error;
+mod isbn;
 mod metadata;
+mod openlibrary;
 mod pdf;
 mod scan;
 mod search;
@@ -25,11 +27,14 @@ struct Cli {
 enum Command {
     /// Scan ./incoming/ for new PDFs, extract DOIs, fetch metadata, file them
     Scan,
-    /// Manually add a PDF with a known DOI
+    /// Manually add a PDF with a known DOI or ISBN
     Add {
         path: PathBuf,
+        #[arg(long, conflicts_with = "isbn", required_unless_present = "isbn")]
+        doi: Option<String>,
+        /// for books CrossRef does not know; resolved through OpenLibrary
         #[arg(long)]
-        doi: String,
+        isbn: Option<String>,
     },
     /// Full-text search; prints matching ./pdfs/<key>.pdf paths with title and first author
     Search {
@@ -76,7 +81,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Scan => scan::scan()?,
-        Command::Add { path, doi } => scan::add_with_doi(&path, &doi)?,
+        Command::Add { path, doi, isbn } => {
+            scan::add_manually(&path, doi.as_deref(), isbn.as_deref())?
+        }
         Command::Search { query, context } => search::search(&query, context)?,
         Command::Reindex { tags_only } => match tags_only {
             true => search::reindex_tags()?,

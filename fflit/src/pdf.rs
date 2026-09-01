@@ -184,6 +184,12 @@ pub fn page_text(path: &Path, first: u32, last: u32) -> Result<String, FflitErro
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Front matter: cover, title page, copyright page. A book states its ISBN
+/// here rather than on page 1, which is usually just the cover.
+pub fn front_matter_text(path: &Path) -> String {
+    page_text(path, 1, 8).unwrap_or_else(|_| page_text(path, 1, 0).unwrap_or_default())
+}
+
 fn extract_from_text(path: &Path) -> Result<DoiHit, FflitError> {
     // the title page first — that is where a paper states its own DOI
     let front = page_text(path, 1, 1)?;
