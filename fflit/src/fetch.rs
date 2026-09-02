@@ -4,7 +4,7 @@
 //! `fflit scan`'s problem like any other pdf — this module does not touch
 //! `literature.bibtex`.
 
-use crate::bibtex::{BibDatabase, BibEntry};
+use crate::bibtex::{is_doi, normalize_doi, BibDatabase, BibEntry};
 use crate::text::normalize_text;
 use crate::unpaywall::{self, OaCopy};
 use crate::{pmc, publisher};
@@ -16,6 +16,8 @@ use std::time::Duration;
 
 /// Anything smaller is an error page wearing a pdf's name.
 const MIN_PDF_BYTES: usize = 10_000;
+/// More than this many places to try by hand is not help, it is a wall of text.
+const MAX_LINKS: usize = 4;
 /// Politeness between API calls; the downloads themselves are slow enough.
 const API_PAUSE: Duration = Duration::from_millis(100);
 /// Publishers watch for exactly this kind of traffic and block whole campuses
@@ -30,6 +32,8 @@ struct Tally {
     already_known: BTreeMap<&'static str, usize>,
     closed: usize,
     no_doi: usize,
+    /// a doi field holding something that is not a doi
+    junk_doi: usize,
     failed: usize,
 }
 
@@ -102,20 +106,12 @@ pub fn fetch(
         .entries
         .iter()
         .filter(|e| known.holds(e).is_none())
-        .filter_map(|e| e.field("doi").filter(|d| !d.is_empty()).map(str::to_string))
+        .filter_map(|e| e.field("doi").filter(|d| is_doi(d)).map(normalize_doi))
         .collect();
-    let in_pmc = match pmc::pmcids(&dois) {
-        Ok(map) => {
-            if !map.is_empty() {
-                eprintln!("{} of {} are in PubMed Central\n", map.len(), dois.len());
-            }
-            map
-        }
-        Err(e) => {
-            eprintln!("{}: PubMed Central lookup failed ({e:#})", "note".yellow());
-            Default::default()
-        }
-    };
+    let in_pmc = pmc::pmcids(&dois);
+    if !in_pmc.is_empty() {
+        eprintln!("{} of {} are in PubMed Central\n", in_pmc.len(), dois.len());
+    }
 
     let mut tally = Tally::default();
     let mut attempted = 0usize;
@@ -130,10 +126,16 @@ pub fn fetch(
             *tally.already_known.entry(how).or_default() += 1;
             continue;
         }
-        let Some(doi) = entry.field("doi").filter(|d| !d.is_empty()) else {
-            tally.no_doi += 1;
+        // somebody else's bibtex puts urls and notes in doi fields, and a
+        // registry asked about one of those rejects the request it came in
+        let Some(doi) = entry.field("doi").filter(|d| is_doi(d)).map(normalize_doi) else {
+            match entry.field("doi").is_some_and(|d| !d.trim().is_empty()) {
+                true => tally.junk_doi += 1,
+                false => tally.no_doi += 1,
+            }
             continue;
         };
+        let doi = doi.as_str();
 
         // named after the citation key, so an interrupted run resumes
         let dest = into.join(format!("{}.pdf", entry.key));
@@ -205,22 +207,48 @@ pub fn fetch(
             }
         }
 
-        // where a person should go, and why a script could not
-        let (url, why) = match (&probed, pmcid) {
-            // a wall a browser walks through beats a link to the same wall
-            (Some(p), _) if p.blocked.is_some() => (p.landing_url.clone(), p.blocked.unwrap()),
-            // the publisher named its pdf and then would not part with it
-            (Some(p), _) if p.pdf_url.is_some() => (
-                p.landing_url.clone(),
-                "pdf refused, may work from the subscribing network",
-            ),
-            (_, Some(id)) => (pmc::article_url(id), "free in pubmed central"),
-            _ => (format!("https://doi.org/{doi}"), "closed access"),
+        // what stood in the way overall, for grouping the report
+        let why = match (&probed, pmcid, copies.is_empty()) {
+            (Some(p), _, _) if p.blocked.is_some() => p.blocked.unwrap(),
+            (Some(p), _, _) if p.pdf_url.is_some() => "pdf refused, may work from the subscribing network",
+            (_, Some(_), _) => "free in pubmed central",
+            (_, _, false) => "listed as free, but nothing served a pdf",
+            _ => "closed access",
         };
+
+        // every place worth a click, in the order fflit tried them
+        let mut links: Vec<Link> = Vec::new();
+        for copy in &copies {
+            links.push(Link {
+                url: copy.url.clone(),
+                note: format!("{} (refused a download)", copy.describe()),
+            });
+        }
+        if let Some(id) = pmcid {
+            links.push(Link {
+                url: pmc::article_url(id),
+                note: "pubmed central, free to read in a browser".into(),
+            });
+        }
+        if let Some(p) = &probed {
+            links.push(Link {
+                url: p.landing_url.clone(),
+                note: p.blocked.unwrap_or("publisher page").to_string(),
+            });
+        }
+        if links.is_empty() {
+            links.push(Link {
+                url: format!("https://doi.org/{doi}"),
+                note: "publisher page via the doi".into(),
+            });
+        }
+        links.dedup_by(|a, b| a.url == b.url);
+        links.truncate(MAX_LINKS);
+
         unobtained.push(Unobtained {
             key: entry.key.clone(),
             title: entry.field("title").unwrap_or_default().to_string(),
-            url,
+            links,
             why,
         });
 
@@ -241,11 +269,18 @@ pub fn fetch(
     Ok(())
 }
 
+/// Somewhere a person could try, and what fflit found there.
+struct Link {
+    url: String,
+    note: String,
+}
+
 struct Unobtained {
     key: String,
     title: String,
-    /// the page to open by hand — resolved past doi.org where we got that far
-    url: String,
+    /// every place worth trying by hand, best first
+    links: Vec<Link>,
+    /// what stood in the way overall, for grouping
     why: &'static str,
 }
 
@@ -262,28 +297,44 @@ fn write_worklist(unobtained: &[Unobtained], path: Option<&Path>) -> anyhow::Res
         by_reason.entry(u.why).or_default().push(u);
     }
 
-    eprintln!("\n{}", "to open yourself:".bold());
+    eprintln!("\n{}", "to chase up yourself:".bold());
     for (why, items) in &by_reason {
         eprintln!("\n  {} — {}", why.yellow(), format!("{} paper(s)", items.len()).dimmed());
         for u in items {
-            eprintln!("    {}  {}", u.key.cyan(), u.url);
+            eprintln!("    {}  {}", u.key.cyan(), truncate(&u.title, 64).dimmed());
+            for link in &u.links {
+                eprintln!("      {}  {}", link.url, format!("({})", link.note).dimmed());
+            }
         }
     }
 
     let Some(path) = path else {
         return Ok(());
     };
-    let mut out = String::new();
+    // one row per link, so the file is a list of things to open
+    let mut out = String::from("key\ttitle\turl\tfound\treason\n");
+    let mut rows = 0usize;
     for u in unobtained {
-        out.push_str(&format!("{}\t{}\t{}\t{}\n", u.key, u.title, u.url, u.why));
+        for link in &u.links {
+            out.push_str(&format!("{}\t{}\t{}\t{}\t{}\n", u.key, u.title, link.url, link.note, u.why));
+            rows += 1;
+        }
     }
     std::fs::write(path, out).with_context(|| format!("writing {}", path.display()))?;
     eprintln!(
-        "\n{} written to {} as key/title/url/reason",
+        "\n{} papers, {rows} links → {}",
         unobtained.len(),
         path.display().to_string().cyan()
     );
     Ok(())
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    match flat.chars().count() <= max {
+        true => flat,
+        false => flat.chars().take(max - 1).collect::<String>() + "…",
+    }
 }
 
 /// Unpaywall lists locations that 403, redirect to a login, or serve a landing
@@ -343,6 +394,13 @@ fn report(t: &Tally, into: &Path, dry_run: bool) {
             n => format!(", {n} already in {}", into.display()),
         }
     );
+    if t.junk_doi > 0 {
+        eprintln!(
+            "{}: {} entries have a doi field holding something that is not a doi",
+            "note".yellow(),
+            t.junk_doi
+        );
+    }
     let skipped: usize = t.already_known.values().sum();
     if skipped > 0 {
         eprintln!(

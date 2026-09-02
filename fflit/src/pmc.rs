@@ -15,15 +15,33 @@ const BATCH: usize = 200;
 
 /// DOI → PMCID for those that have one. Batched, because NCBI asks for no more
 /// than three requests a second and 1000 lookups one at a time is rude.
-pub fn pmcids(dois: &[String]) -> anyhow::Result<HashMap<String, String>> {
+///
+/// Never fails as a whole: the converter rejects an entire request over one id
+/// it dislikes, so a rejected batch is halved and retried rather than lost.
+pub fn pmcids(dois: &[String]) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for chunk in dois.chunks(BATCH) {
-        for (doi, pmcid) in lookup(chunk)? {
-            out.insert(doi, pmcid);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(350));
+        resolve(chunk, &mut out);
     }
-    Ok(out)
+    out
+}
+
+fn resolve(chunk: &[String], out: &mut HashMap<String, String>) {
+    if chunk.is_empty() {
+        return;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(350));
+    match lookup(chunk) {
+        Ok(found) => out.extend(found),
+        Err(_) if chunk.len() > 1 => {
+            // one of them is unpalatable; find out which half
+            let (a, b) = chunk.split_at(chunk.len() / 2);
+            resolve(a, out);
+            resolve(b, out);
+        }
+        // a single id the converter will not take: nothing more to learn
+        Err(_) => {}
+    }
 }
 
 fn lookup(dois: &[String]) -> anyhow::Result<Vec<(String, String)>> {

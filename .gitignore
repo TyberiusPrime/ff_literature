@@ -53,3 +53,4 @@ dev/fuzz/**/output
 dev/fuzz/**/logs
 dev/fuzz/**/core
 test/
+*.bibtex

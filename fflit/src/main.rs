@@ -12,6 +12,7 @@ mod metadata;
 mod openlibrary;
 mod pdf;
 mod pmc;
+mod repair;
 mod publisher;
 mod scan;
 mod search;
@@ -60,6 +61,15 @@ enum Command {
         /// Show up to 3 matching text passages per result
         #[arg(long)]
         context: bool,
+    },
+    /// Fix a literature.bibtex that no longer parses
+    Repair {
+        /// bibtex to repair; the previous version is kept as .bibtex.bak
+        #[arg(default_value = "./literature.bibtex")]
+        bibtex: PathBuf,
+        /// report what would change without writing anything
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Rebuild the full-text search index from ./pdfs/
     Reindex {
@@ -142,6 +152,7 @@ fn main() -> anyhow::Result<()> {
             scan::add_manually(&path, doi.as_deref(), isbn.as_deref(), &clean_tags(tags))?
         }
         Command::Search { query, context } => search::search(&query, context)?,
+        Command::Repair { bibtex, dry_run } => repair::repair(&bibtex, dry_run)?,
         Command::Reindex { tags_only } => match tags_only {
             true => search::reindex_tags()?,
             false => search::reindex()?,

@@ -217,6 +217,14 @@ Every download is checked for actually being one: a captcha, a cookie wall or an
 apology gets rejected rather than filed, so `failed` means no location served a
 real file, not that the paper is unavailable.
 
+DOI fields are normalised before any registry sees them — `https://doi.org/…`
+and `doi:` prefixes stripped, whitespace trimmed, case folded — and entries
+whose `doi` field holds something that is not a DOI (`in press`, a url, an empty
+brace pair) are counted and skipped rather than sent. This matters more than it
+sounds: the PubMed Central converter rejects an entire request of 200 over one
+id it dislikes, so a single malformed field used to cost every lookup in its
+batch. Batches that are rejected anyway are halved and retried rather than lost.
+
 **PubMed Central** is checked as well, in one batched lookup, since it holds
 free copies Unpaywall does not always list — NIH funded author manuscripts above
 all. PMC serves an interstitial rather than a file to anything that is not a
@@ -239,34 +247,40 @@ Cloudflare challenges the client rather than the IP, so a subscribing network
 does not help there. Two seconds between publisher requests, deliberately:
 publishers watch for exactly this traffic and block whole campuses over it.
 
-**What could not be fetched is printed as links to open yourself**, grouped by
-what stood in the way, and resolved past `doi.org` to the real page:
+**What could not be fetched is printed as links to chase up yourself** — every
+place fflit tried, not just one, since those are the pages you would open. Up to
+four per paper, in the order they were tried, grouped by what stood in the way:
 
 ```
-to open yourself:
+to chase up yourself:
 
   bot challenge, opens fine in a browser — 2 paper(s)
-    Akiba2019Optuna  https://dl.acm.org/doi/10.1145/3292500.3330701
-    Oxford2021Nar    https://academic.oup.com/nar/article/49/D1/D480/6006196
-
-  javascript redirect, opens fine in a browser — 1 paper(s)
-    Kelley2011Cell   https://linkinghub.elsevier.com/retrieve/pii/S0092867411001279
+    Oxford2021Nar  Something at Oxford University Press
+      https://academic.oup.com/nar/article-pdf/49/D1/D480/35364103/gkaa1100.pdf  (publisher published version (refused a download))
+      https://archive-ouverte.unige.ch/unige:159643  (repository landing page (refused a download))
+      https://repository.publisso.de/resource/frl:6425514  (repository landing page (refused a download))
 
   pdf refused, may work from the subscribing network — 1 paper(s)
-    LeCun2015Deep    https://www.nature.com/articles/nature14539
+    LeCun2015Deep  Deep learning
+      https://hal.science/hal-04206682  (repository landing page (refused a download))
+      https://www.nature.com/articles/nature14539  (publisher page)
 ```
 
 The grouping is the useful part: a Cloudflare challenge or an Elsevier
-javascript redirect is nothing to a browser, so those links are worth clicking,
-while `closed access` means nobody has a copy to give. Session noise publishers
-hang off the url (`?error=cookies_not_supported&code=…`) is stripped, since it
-is stale by the time anyone clicks.
+javascript redirect is nothing to a browser, so those are worth clicking, while
+`closed access` means nobody has a copy to give. Session noise publishers hang
+off the url (`?error=cookies_not_supported&code=…`) is stripped, since it is
+stale by the time anyone clicks. A repository landing page that refused a script
+will usually hand a person the pdf.
 
-**`--worklist FILE`** writes the same thing as `key<TAB>title<TAB>url<TAB>reason`:
+**`--worklist FILE`** writes the same thing as a header row plus
+`key/title/url/found/reason`, one row per link:
 
 ```sh
-fflit fetch missing.bibtex --publisher --worklist todo.tsv
-grep 'browser' todo.tsv | cut -f3 | xargs -n1 -P4 firefox
+fflit fetch missing.bibtex --publisher --worklist chase.tsv
+cut -f3 chase.tsv | tail -n +2 | xargs -n1 -P4 firefox     # open the lot
+grep 'browser' chase.tsv | cut -f3                          # only what a browser gets through
+awk -F'\t' '$5 ~ /pubmed/' chase.tsv | cut -f3             # only pubmed central
 ```
 
 Files are named after their citation key, so an interrupted run resumes where it
@@ -274,6 +288,39 @@ stopped — already downloaded entries are skipped. `--dry-run` reports what is
 available without downloading, `--limit` stops after N lookups. Nothing here
 touches `literature.bibtex`; the pdfs land in `incoming/` and are `fflit scan`'s
 problem from there.
+
+```
+fflit repair
+fflit repair --dry-run
+```
+Fix a `literature.bibtex` that no longer parses. The usual cause is unbalanced
+braces in a field value: values are written inside `{…}`, so one brace that
+never closes — or closes nothing — swallows the rest of that entry and every
+entry after it. Abstracts are the usual source; markup arrives from the registry
+already mangled, and a single stray `}` in `O(n log} | Σ |)` is enough.
+
+```
+$ fflit scan
+Error: parsing ./literature.bibtex: unbalanced braces in one entry
+  line 7935: @{Vlimki2007Compressed}, in the abstract field
+run `fflit repair ./literature.bibtex` to fix them
+
+$ fflit repair
+one entry with unbalanced braces:
+  line 7935: Vlimki2007Compressed, in the abstract field
+1 field(s) fixed in ./literature.bibtex (previous version kept as ./literature.bibtex.bak)
+```
+
+Unmatched braces are dropped rather than escaped — bibtex parsers count raw
+braces, so `\{` would leave the file just as unbalanced, and a delimiter with
+nothing to delimit has no meaning to lose. Balanced braces are left alone, since
+`{DNA}` in a title protects capitalisation on purpose. The repair works on lines
+rather than by parsing, since a file that needs repairing is by definition one
+that will not parse, and it refuses to write unless the result balances. The
+previous version is always kept as `.bibtex.bak`.
+
+Entries written from now on are brace balanced on the way out, so this should
+not recur.
 
 ```
 fflit reindex
