@@ -4,7 +4,8 @@
 //! `fflit scan`'s problem like any other pdf — this module does not touch
 //! `literature.bibtex`.
 
-use crate::bibtex::BibDatabase;
+use crate::bibtex::{BibDatabase, BibEntry};
+use crate::text::normalize_text;
 use crate::unpaywall::{self, OaCopy};
 use crate::{pmc, publisher};
 use anyhow::Context;
@@ -25,9 +26,50 @@ const PUBLISHER_PAUSE: Duration = Duration::from_secs(2);
 struct Tally {
     downloaded: usize,
     already_here: usize,
+    /// how each skipped entry was recognised: doi, isbn or title
+    already_known: BTreeMap<&'static str, usize>,
     closed: usize,
     no_doi: usize,
     failed: usize,
+}
+
+/// What the library already holds, so a run does not fetch it twice. Identity
+/// by doi or isbn, and by title for the same paper filed under a different one
+/// — a preprint and its published version have different dois.
+struct Known {
+    db: BibDatabase,
+    titles: std::collections::HashSet<String>,
+}
+
+impl Known {
+    fn load(repository: &Path) -> anyhow::Result<Self> {
+        Ok(Self::from_db(BibDatabase::load(&repository.join("literature.bibtex"))?))
+    }
+
+    fn from_db(db: BibDatabase) -> Self {
+        let titles = db
+            .entries
+            .iter()
+            .filter_map(|e| e.field("title"))
+            .map(normalize_text)
+            .filter(|t| !t.is_empty())
+            .collect();
+        Self { db, titles }
+    }
+
+    fn holds(&self, entry: &BibEntry) -> Option<&'static str> {
+        if entry.field("doi").is_some_and(|d| self.db.contains_doi(d)) {
+            return Some("doi");
+        }
+        if entry.field("isbn").is_some_and(|i| self.db.contains_isbn(i)) {
+            return Some("isbn");
+        }
+        let title = normalize_text(entry.field("title").unwrap_or_default());
+        match !title.is_empty() && self.titles.contains(&title) {
+            true => Some("title"),
+            false => None,
+        }
+    }
 }
 
 pub fn fetch(
@@ -37,8 +79,19 @@ pub fn fetch(
     dry_run: bool,
     use_publisher: bool,
     worklist: Option<&Path>,
+    repository: &Path,
 ) -> anyhow::Result<()> {
     let db = BibDatabase::load(bibtex)?;
+
+    // whatever the library already holds is not worth downloading again
+    let known = Known::load(repository)?;
+    if known.db.entries.is_empty() {
+        eprintln!(
+            "{}: no entries in {} — nothing to subtract",
+            "note".yellow(),
+            repository.join("literature.bibtex").display()
+        );
+    }
     if !dry_run {
         std::fs::create_dir_all(into)
             .with_context(|| format!("creating {}", into.display()))?;
@@ -48,6 +101,7 @@ pub fn fetch(
     let dois: Vec<String> = db
         .entries
         .iter()
+        .filter(|e| known.holds(e).is_none())
         .filter_map(|e| e.field("doi").filter(|d| !d.is_empty()).map(str::to_string))
         .collect();
     let in_pmc = match pmc::pmcids(&dois) {
@@ -58,7 +112,7 @@ pub fn fetch(
             map
         }
         Err(e) => {
-            eprintln!("{}: PubMed Central lookup failed ({e})", "note".yellow());
+            eprintln!("{}: PubMed Central lookup failed ({e:#})", "note".yellow());
             Default::default()
         }
     };
@@ -71,6 +125,10 @@ pub fn fetch(
     for entry in &db.entries {
         if limit.is_some_and(|n| attempted >= n) {
             break;
+        }
+        if let Some(how) = known.holds(entry) {
+            *tally.already_known.entry(how).or_default() += 1;
+            continue;
         }
         let Some(doi) = entry.field("doi").filter(|d| !d.is_empty()) else {
             tally.no_doi += 1;
@@ -88,7 +146,7 @@ pub fn fetch(
         let mut copies = match unpaywall::pdf_locations(doi) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("{}  {}: {e}", "error ".red(), entry.key.cyan());
+                eprintln!("{}  {}: {e:#}", "error ".red(), entry.key.cyan());
                 tally.failed += 1;
                 continue;
             }
@@ -285,6 +343,17 @@ fn report(t: &Tally, into: &Path, dry_run: bool) {
             n => format!(", {n} already in {}", into.display()),
         }
     );
+    let skipped: usize = t.already_known.values().sum();
+    if skipped > 0 {
+        eprintln!(
+            "{skipped} skipped, already in the library ({})",
+            t.already_known
+                .iter()
+                .map(|(how, n)| format!("{n} by {how}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     if t.downloaded > 0 && !dry_run {
         eprintln!("run {} to file them", "fflit scan".cyan());
     }
@@ -293,6 +362,51 @@ fn report(t: &Tally, into: &Path, dry_run: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(fields: &[(&str, &str)]) -> BibEntry {
+        BibEntry {
+            entry_type: "article".into(),
+            key: "Key2020Word".into(),
+            fields: fields.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+        }
+    }
+
+    fn library(fields: &[(&str, &str)]) -> Known {
+        let mut db = BibDatabase::empty();
+        db.add(entry(fields));
+        Known::from_db(db)
+    }
+
+    #[test]
+    fn what_the_library_holds_is_not_downloaded_again() {
+        let lib = library(&[("doi", "10.1/ABC"), ("title", "Deep learning for genomics")]);
+        // the same paper, written differently, from someone else's bibtex
+        assert_eq!(lib.holds(&entry(&[("doi", "https://doi.org/10.1/abc")])), Some("doi"));
+        assert_eq!(lib.holds(&entry(&[("title", "Deep Learning for {Genomics}")])), Some("title"));
+        assert_eq!(lib.holds(&entry(&[("title", "Something else entirely")])), None);
+    }
+
+    #[test]
+    fn a_preprint_and_its_published_version_are_one_paper() {
+        // filed from an arxiv id, wanted under the journal doi
+        let lib = library(&[("doi", "10.48550/arxiv.1706.03762"), ("title", "Attention Is All You Need")]);
+        let published = entry(&[("doi", "10.5555/3295222.3295349"), ("title", "Attention is all you need")]);
+        assert_eq!(lib.holds(&published), Some("title"));
+    }
+
+    #[test]
+    fn books_are_recognised_by_isbn() {
+        let lib = library(&[("isbn", "9781449367374"), ("title", "Bioinformatics Data Skills")]);
+        assert_eq!(lib.holds(&entry(&[("isbn", "978-1-4493-6737-4")])), Some("isbn"));
+    }
+
+    #[test]
+    fn an_empty_library_holds_nothing() {
+        let lib = Known::from_db(BibDatabase::empty());
+        assert_eq!(lib.holds(&entry(&[("doi", "10.1/abc"), ("title", "T")])), None);
+        // an entry with no title at all must not match on the empty string
+        assert_eq!(library(&[("doi", "10.9/z")]).holds(&entry(&[("doi", "10.1/abc")])), None);
+    }
 
     #[test]
     fn only_real_pdfs_count() {

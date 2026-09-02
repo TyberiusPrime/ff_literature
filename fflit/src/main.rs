@@ -88,6 +88,10 @@ enum Command {
         /// key/title/url, to work through by hand
         #[arg(long, value_name = "FILE")]
         worklist: Option<PathBuf>,
+        /// library to subtract first: anything already in its literature.bibtex
+        /// is not downloaded again
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        repository: PathBuf,
     },
     /// Report the entries of one bibtex that are missing from another
     Diff {
@@ -142,8 +146,8 @@ fn main() -> anyhow::Result<()> {
             true => search::reindex_tags()?,
             false => search::reindex()?,
         },
-        Command::Fetch { bibtex, into, limit, dry_run, publisher, worklist } => {
-            fetch::fetch(&bibtex, &into, limit, dry_run, publisher, worklist.as_deref())?
+        Command::Fetch { bibtex, into, limit, dry_run, publisher, worklist, repository } => {
+            fetch::fetch(&bibtex, &into, limit, dry_run, publisher, worklist.as_deref(), &repository)?
         }
         Command::Diff {
             a,

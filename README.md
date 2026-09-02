@@ -181,7 +181,25 @@ fflit fetch missing.bibtex --dry-run
 fflit fetch missing.bibtex --limit 20 --into ./incoming
 fflit fetch missing.bibtex --publisher --worklist todo.tsv
 ```
-Download the open access copies of everything in a bibtex. Pairs with `diff`:
+Download the open access copies of everything in a bibtex.
+
+**What the library already holds is subtracted first**, so pointing this at your
+whole bibliography is safe and idempotent — it will not re-download what you
+have. Entries are recognised by DOI, by ISBN, and by title, the last because the
+same paper can sit in two files under two different DOIs (a preprint filed from
+its arXiv id, wanted under the journal DOI). `--repository DIR` says which
+library to subtract; the default is the current directory.
+
+```
+$ fflit fetch everything.bibtex --dry-run
+oa      new_one_2020  (repository landing page)
+
+1 available, 0 closed access, 0 failed
+3 skipped, already in the library (1 by doi, 2 by title)
+```
+
+It also pairs with `diff`, which is worth doing for the report rather than the
+subtraction:
 
 ```sh
 fflit diff theirs.bibtex . --output missing.bibtex   # what the library lacks

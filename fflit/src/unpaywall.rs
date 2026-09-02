@@ -9,6 +9,18 @@ use anyhow::Context;
 const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
 const EMAIL: &str = "john@coonabibba.de";
 
+/// One retry, because a slow or briefly unreachable API should not cost a paper
+/// in a run of a thousand.
+fn with_retry<T, E>(mut f: impl FnMut() -> Result<T, E>) -> Result<T, E> {
+    match f() {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            f()
+        }
+    }
+}
+
 pub struct OaCopy {
     pub url: String,
     pub version: String,
@@ -30,13 +42,17 @@ impl OaCopy {
 /// is closed access — which is not an error, just an answer.
 pub fn pdf_locations(doi: &str) -> anyhow::Result<Vec<OaCopy>> {
     let url = format!("https://api.unpaywall.org/v2/{doi}");
-    let response = reqwest::blocking::Client::new()
-        .get(&url)
-        .header("User-Agent", USER_AGENT)
-        .query(&[("email", EMAIL)])
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .with_context(|| format!("HTTP request failed for DOI {doi}"))?;
+    // some records take fifteen seconds; over a thousand papers a stingy
+    // timeout loses papers that were only slow
+    let response = with_retry(|| {
+        reqwest::blocking::Client::new()
+            .get(&url)
+            .header("User-Agent", USER_AGENT)
+            .query(&[("email", EMAIL)])
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+    })
+    .with_context(|| format!("HTTP request failed for DOI {doi}"))?;
 
     // a DOI Unpaywall has never heard of is a 404, not a failure of ours
     if response.status() == reqwest::StatusCode::NOT_FOUND {
