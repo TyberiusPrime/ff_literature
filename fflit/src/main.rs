@@ -13,7 +13,7 @@ mod scan;
 mod search;
 mod text;
 
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -28,12 +28,17 @@ enum Command {
     /// Scan ./incoming/ for new PDFs, extract DOIs, fetch metadata, file them
     Scan,
     /// Manually add a PDF with a known DOI or ISBN
+    // a group rather than required_unless_present, so that leaving both out
+    // reports both as the alternatives they are
+    #[command(group(ArgGroup::new("identifier").required(true).args(["doi", "isbn"])))]
     Add {
         path: PathBuf,
-        #[arg(long, conflicts_with = "isbn", required_unless_present = "isbn")]
+        /// DOI of the paper, in any of the usual forms
+        #[arg(long, value_name = "DOI")]
         doi: Option<String>,
-        /// for books CrossRef does not know; resolved through OpenLibrary
-        #[arg(long)]
+        /// ISBN of the book, 10 or 13 digits; for what CrossRef does not know,
+        /// resolved through OpenLibrary
+        #[arg(long, value_name = "ISBN")]
         isbn: Option<String>,
     },
     /// Full-text search; prints matching ./pdfs/<key>.pdf paths with title and first author
