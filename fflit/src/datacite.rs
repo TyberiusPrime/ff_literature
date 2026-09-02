@@ -1,7 +1,7 @@
 //! DataCite: arXiv preprints, Zenodo deposits, datasets — everything CrossRef
 //! does not register.
 
-use crate::metadata::{Author, WorkMetadata};
+use crate::metadata::{author_from_name, Author, WorkMetadata};
 use anyhow::Context;
 
 const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
@@ -81,20 +81,7 @@ fn parse_creator(c: &serde_json::Value) -> Author {
     let Some(name) = c["name"].as_str() else {
         return Author { family: None, given: None };
     };
-    match name.split_once(',') {
-        Some((family, given)) => Author {
-            family: Some(family.trim().to_string()),
-            given: Some(given.trim().to_string()),
-        },
-        // "Ashish Vaswani" — assume the last word is the family name
-        None => match name.rsplit_once(' ') {
-            Some((given, family)) => Author {
-                family: Some(family.to_string()),
-                given: Some(given.to_string()),
-            },
-            None => Author { family: Some(name.to_string()), given: None },
-        },
-    }
+    author_from_name(name)
 }
 
 fn map_type(t: &str) -> &'static str {

@@ -1,13 +1,5 @@
-use crate::metadata::{Author, WorkMetadata};
+use crate::metadata::{strip_tags, Author, WorkMetadata};
 use anyhow::Context;
-use regex::Regex;
-use std::sync::OnceLock;
-
-static TAG_RE: OnceLock<Regex> = OnceLock::new();
-
-fn tag_regex() -> &'static Regex {
-    TAG_RE.get_or_init(|| Regex::new(r"<[^>]+>").unwrap())
-}
 
 const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
 
@@ -122,7 +114,7 @@ fn parse_work(msg: &serde_json::Value) -> WorkMetadata {
     let publisher = msg["publisher"].as_str().map(str::to_string);
     let abstract_text = msg["abstract"]
         .as_str()
-        .map(|s| tag_regex().replace_all(s, "").into_owned());
+        .map(strip_tags);
 
     WorkMetadata {
         doi: msg["DOI"].as_str().unwrap_or_default().to_string(),

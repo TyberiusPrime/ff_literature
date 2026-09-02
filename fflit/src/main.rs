@@ -2,6 +2,7 @@ mod assemble;
 mod bibtex;
 mod crossref;
 mod datacite;
+mod doi_org;
 mod diff;
 mod discover;
 mod error;

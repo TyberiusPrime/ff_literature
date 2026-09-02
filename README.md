@@ -4,7 +4,7 @@ Personal literature 'manager'.
 
 * Scans an `incoming/` drop folder
 * works out what each PDF is — DOI, arXiv id, ISBN, or by asking about its title page
-* fetches metadata from CrossRef, DataCite or OpenLibrary 
+* fetches metadata from CrossRef, DataCite, doi.org or OpenLibrary 
 * renames/moves files to `pdfs/<BibKey>.pdf`
 * maintains a sorted `literature.bibtex`. 
 
@@ -19,7 +19,8 @@ It's mostly glue between existing things anyway.
 ## Requirements
 
 - `pdftotext` (poppler) — in PATH
-- Network access to `api.crossref.org`, `api.datacite.org` and `openlibrary.org`
+- Network access to `api.crossref.org`, `api.datacite.org`, `doi.org` and
+  `openlibrary.org`
 
 With the Nix flake: `nix develop` puts everything in scope.
 
@@ -41,10 +42,31 @@ fflit scan
 Process every PDF in `./incoming/`. For each file:
 1. SHA-256 checked against `literature.bibtex` — duplicate goes to `duplicates/`
 2. Identified (see below); failure → `failed_pdfs/`
-3. Metadata fetched from CrossRef, DataCite for what CrossRef does not register
-   (arXiv, Zenodo), or OpenLibrary for books with no DOI; fetch failure →
-   `failed_pdfs/`
+3. Metadata fetched (see below); fetch failure → `failed_pdfs/`
 4. File moved to `pdfs/<Author><Year><Word>.pdf` and entry appended to `literature.bibtex`
+
+### Where metadata comes from
+
+A DOI is resolved by asking, in order:
+
+1. **CrossRef** — the published literature, and the richest records.
+2. **DataCite** — arXiv, Zenodo, datasets, and a good deal else besides.
+3. **doi.org content negotiation** — every registration agency answers this with
+   CSL-JSON, so the agencies fflit does not speak to directly are covered by one
+   fallback rather than one API each. This is what resolves ISTIC, mEDRA, JaLC,
+   KISTI and Airiti DOIs, which return 404 from both CrossRef and DataCite.
+
+If all three come up empty, the DOI is looked up in the registration agency
+index, so the error distinguishes a DOI nobody can describe from one that was
+never registered:
+
+```
+  metadata fetch failed (10.9999/nope is not a registered DOI)
+  metadata fetch failed (10.xxxx/yyy is registered with mEDRA, but none of
+                         crossref, datacite, doi.org could describe it)
+```
+
+Books are resolved by ISBN through CrossRef, then OpenLibrary.
 
 ### How a PDF is identified
 

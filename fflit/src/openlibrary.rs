@@ -1,7 +1,7 @@
 //! OpenLibrary: the books no DOI registry knows about — technical, trade, and
 //! most of what was printed before publishers started minting DOIs.
 
-use crate::metadata::{Author, WorkMetadata};
+use crate::metadata::{author_from_name, Author, WorkMetadata};
 use anyhow::{bail, Context};
 use regex::Regex;
 use std::sync::OnceLock;
@@ -63,13 +63,7 @@ fn parse(book: &serde_json::Value, isbn13: &str) -> WorkMetadata {
 
 /// OpenLibrary writes names out in full: "Vince Buffalo".
 fn split_name(name: &str) -> Author {
-    match name.rsplit_once(' ') {
-        Some((given, family)) => Author {
-            family: Some(family.to_string()),
-            given: Some(given.to_string()),
-        },
-        None => Author { family: Some(name.to_string()), given: None },
-    }
+    author_from_name(name)
 }
 
 /// `publish_date` is free text: "2015", "August 2015", "May 3, 2015".

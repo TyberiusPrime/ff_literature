@@ -4,7 +4,10 @@
 //! collects — arXiv preprints above all — is registered with DataCite instead,
 //! so a DOI that CrossRef does not know is not yet a dead end.
 
-use crate::{crossref, datacite, openlibrary};
+use crate::{crossref, datacite, doi_org, openlibrary};
+use anyhow::bail;
+use regex::Regex;
+use std::sync::OnceLock;
 
 #[derive(Clone)]
 pub struct WorkMetadata {
@@ -30,17 +33,70 @@ pub struct Author {
 }
 
 
-/// Resolve a DOI to metadata, asking whichever registry is likely to have it.
+/// Resolve a DOI, trying the agency most likely to hold it and falling back to
+/// content negotiation, which every registration agency answers.
 pub fn fetch(doi: &str) -> anyhow::Result<WorkMetadata> {
-    if is_datacite_prefix(doi) {
-        return datacite::fetch(doi);
+    let mut tried: Vec<&str> = Vec::new();
+
+    if !is_datacite_prefix(doi) {
+        match crossref::fetch(doi) {
+            Ok(meta) => return Ok(meta),
+            Err(_) => tried.push("crossref"),
+        }
     }
-    match crossref::fetch(doi) {
-        Ok(meta) => Ok(meta),
-        Err(crossref_err) => datacite::fetch(doi).map_err(|datacite_err| {
-            anyhow::anyhow!("{crossref_err}; datacite also failed: {datacite_err}")
-        }),
+    match datacite::fetch(doi) {
+        Ok(meta) => return Ok(meta),
+        Err(_) => tried.push("datacite"),
     }
+    match doi_org::fetch(doi) {
+        Ok(meta) => return Ok(meta),
+        Err(_) => tried.push("doi.org"),
+    }
+
+    // say whether the doi is unknown or merely unhelpful
+    match doi_org::registration_agency(doi) {
+        Some(ra) => bail!(
+            "{doi} is registered with {ra}, but none of {} could describe it",
+            tried.join(", ")
+        ),
+        None => bail!("{doi} is not a registered DOI"),
+    }
+}
+
+/// "Family, Given" or "Given Family" — agencies disagree, and some send the
+/// whole name in one field.
+pub fn author_from_name(name: &str) -> Author {
+    let name = name.trim();
+    if let Some((family, given)) = name.split_once(',') {
+        return Author {
+            family: Some(family.trim().to_string()),
+            given: Some(given.trim().to_string()).filter(|g| !g.is_empty()),
+        };
+    }
+    match name.rsplit_once(' ') {
+        Some((given, family)) => Author {
+            family: Some(family.to_string()),
+            given: Some(given.to_string()),
+        },
+        None => Author {
+            family: Some(name.to_string()).filter(|n| !n.is_empty()),
+            given: None,
+        },
+    }
+}
+
+/// Abstracts arrive as JATS or HTML.
+pub fn strip_tags(s: &str) -> String {
+    static TAG_RE: OnceLock<Regex> = OnceLock::new();
+    let re = TAG_RE.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
+    re.replace_all(s, "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        // punctuation left behind where a title element used to be
+        .trim_start_matches([';', ':', '.', ','])
+        .trim()
+        .to_string()
 }
 
 /// Resolve an ISBN. CrossRef has the academic presses and gives us a DOI as
@@ -66,6 +122,25 @@ fn is_datacite_prefix(doi: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_are_split_whichever_way_they_arrive() {
+        let a = author_from_name("Vaswani, Ashish");
+        assert_eq!((a.family.as_deref(), a.given.as_deref()), (Some("Vaswani"), Some("Ashish")));
+        let a = author_from_name("Noor Hasan");
+        assert_eq!((a.family.as_deref(), a.given.as_deref()), (Some("Hasan"), Some("Noor")));
+        let a = author_from_name("Thomas S. Kuhn");
+        assert_eq!((a.family.as_deref(), a.given.as_deref()), (Some("Kuhn"), Some("Thomas S.")));
+        let a = author_from_name("Aristotle");
+        assert_eq!((a.family.as_deref(), a.given.as_deref()), (Some("Aristotle"), None));
+    }
+
+    #[test]
+    fn markup_does_not_belong_in_an_abstract() {
+        assert_eq!(strip_tags("<jats:p>Hello   there</jats:p>"), "Hello there");
+        // what is left when an empty title element is stripped out
+        assert_eq!(strip_tags("<jats:title/>;The complexity"), "The complexity");
+    }
 
     #[test]
     fn arxiv_and_zenodo_skip_crossref() {
