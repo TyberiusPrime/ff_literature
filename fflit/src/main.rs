@@ -6,13 +6,17 @@ mod doi_org;
 mod diff;
 mod discover;
 mod error;
+mod fetch;
 mod isbn;
 mod metadata;
 mod openlibrary;
 mod pdf;
+mod pmc;
+mod publisher;
 mod scan;
 mod search;
 mod text;
+mod unpaywall;
 
 use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
@@ -62,6 +66,28 @@ enum Command {
         /// only refresh the keywords from literature.bibtex, leave the text alone
         #[arg(long)]
         tags_only: bool,
+    },
+    /// Download the open access pdfs of a bibtex into ./incoming/
+    Fetch {
+        /// bibtex to work through — `fflit diff --output` writes a suitable one
+        bibtex: PathBuf,
+        /// where to put the pdfs
+        #[arg(long, value_name = "DIR", default_value = "./incoming")]
+        into: PathBuf,
+        /// stop after this many lookups, to try a batch first
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// report what is available without downloading anything
+        #[arg(long)]
+        dry_run: bool,
+        /// for what is not free, also try the publisher's own pdf — only
+        /// useful from a network your library subscribes from
+        #[arg(long)]
+        publisher: bool,
+        /// write everything that could not be fetched to this file, as
+        /// key/title/url, to work through by hand
+        #[arg(long, value_name = "FILE")]
+        worklist: Option<PathBuf>,
     },
     /// Report the entries of one bibtex that are missing from another
     Diff {
@@ -116,6 +142,9 @@ fn main() -> anyhow::Result<()> {
             true => search::reindex_tags()?,
             false => search::reindex()?,
         },
+        Command::Fetch { bibtex, into, limit, dry_run, publisher, worklist } => {
+            fetch::fetch(&bibtex, &into, limit, dry_run, publisher, worklist.as_deref())?
+        }
         Command::Diff {
             a,
             b,

@@ -176,6 +176,88 @@ word overlap, first author and year, and lands in one of two buckets:
 puts the uncertain ones in there too.
 
 ```
+fflit fetch missing.bibtex
+fflit fetch missing.bibtex --dry-run
+fflit fetch missing.bibtex --limit 20 --into ./incoming
+fflit fetch missing.bibtex --publisher --worklist todo.tsv
+```
+Download the open access copies of everything in a bibtex. Pairs with `diff`:
+
+```sh
+fflit diff theirs.bibtex . --output missing.bibtex   # what the library lacks
+fflit fetch missing.bibtex                           # get what is free
+fflit scan --tag from-unpaywall                      # file it
+```
+
+Unpaywall is asked where a legally free copy lives, and every location it names
+is tried in turn — published version before accepted manuscript before preprint,
+repositories before publishers, since a repository will hand a file to a script
+and a publisher often will not. Locations with only a landing page are tried
+last, because sometimes that page *is* the pdf.
+
+Every download is checked for actually being one: a captcha, a cookie wall or an
+apology gets rejected rather than filed, so `failed` means no location served a
+real file, not that the paper is unavailable.
+
+**PubMed Central** is checked as well, in one batched lookup, since it holds
+free copies Unpaywall does not always list — NIH funded author manuscripts above
+all. PMC serves an interstitial rather than a file to anything that is not a
+browser, so those downloads usually fail; fflit reports how many of your papers
+are free to read there and puts the links in the worklist rather than pretending
+to be a browser to get around it.
+
+**`--publisher`** is for when you are on a network your library subscribes from.
+It resolves the DOI, reads the `citation_pdf_url` that publishers advertise for
+indexing, and asks for that file — no circumvention, and off the subscribing
+network it just gets a paywall page and gives up. Expect partial success:
+
+| publisher | landing page, plain HTTP client |
+| --- | --- |
+| Nature, PLOS | serves HTML, tag present ✓ |
+| Elsevier | JS redirect, no tag |
+| ACM, OUP | 403 Cloudflare challenge |
+
+Cloudflare challenges the client rather than the IP, so a subscribing network
+does not help there. Two seconds between publisher requests, deliberately:
+publishers watch for exactly this traffic and block whole campuses over it.
+
+**What could not be fetched is printed as links to open yourself**, grouped by
+what stood in the way, and resolved past `doi.org` to the real page:
+
+```
+to open yourself:
+
+  bot challenge, opens fine in a browser — 2 paper(s)
+    Akiba2019Optuna  https://dl.acm.org/doi/10.1145/3292500.3330701
+    Oxford2021Nar    https://academic.oup.com/nar/article/49/D1/D480/6006196
+
+  javascript redirect, opens fine in a browser — 1 paper(s)
+    Kelley2011Cell   https://linkinghub.elsevier.com/retrieve/pii/S0092867411001279
+
+  pdf refused, may work from the subscribing network — 1 paper(s)
+    LeCun2015Deep    https://www.nature.com/articles/nature14539
+```
+
+The grouping is the useful part: a Cloudflare challenge or an Elsevier
+javascript redirect is nothing to a browser, so those links are worth clicking,
+while `closed access` means nobody has a copy to give. Session noise publishers
+hang off the url (`?error=cookies_not_supported&code=…`) is stripped, since it
+is stale by the time anyone clicks.
+
+**`--worklist FILE`** writes the same thing as `key<TAB>title<TAB>url<TAB>reason`:
+
+```sh
+fflit fetch missing.bibtex --publisher --worklist todo.tsv
+grep 'browser' todo.tsv | cut -f3 | xargs -n1 -P4 firefox
+```
+
+Files are named after their citation key, so an interrupted run resumes where it
+stopped — already downloaded entries are skipped. `--dry-run` reports what is
+available without downloading, `--limit` stops after N lookups. Nothing here
+touches `literature.bibtex`; the pdfs land in `incoming/` and are `fflit scan`'s
+problem from there.
+
+```
 fflit reindex
 fflit reindex --tags-only
 ```
