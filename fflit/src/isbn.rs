@@ -3,6 +3,7 @@
 //! That page is mostly numbers — printing codes, LCCN, phone numbers — so the
 //! check digit does the real work of telling an ISBN from the rest.
 
+use crate::text::fold_typography;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -20,8 +21,9 @@ fn isbn_regex() -> &'static Regex {
 /// Books list several — paperback, hardback, ebook — and the first is usually
 /// the edition in hand.
 pub fn find_all(text: &str) -> Vec<String> {
+    let text = fold_typography(text);
     let mut out: Vec<String> = Vec::new();
-    for c in isbn_regex().captures_iter(text) {
+    for c in isbn_regex().captures_iter(&text) {
         let Some(isbn) = normalize(&c[1]) else { continue };
         if !out.contains(&isbn) {
             out.push(isbn);
@@ -32,7 +34,8 @@ pub fn find_all(text: &str) -> Vec<String> {
 
 /// Strip separators, check the digit, and return the ISBN-13 form.
 pub fn normalize(raw: &str) -> Option<String> {
-    let digits: String = raw
+    // a number copied out of a book need not be ASCII
+    let digits: String = fold_typography(raw)
         .chars()
         .filter(|c| c.is_ascii_digit() || *c == 'X' || *c == 'x')
         .map(|c| c.to_ascii_uppercase())
@@ -88,6 +91,20 @@ mod tests {
         assert_eq!(find_all("ISBN 978-1-4493-6737-4"), vec!["9781449367374"]);
         assert_eq!(find_all("ISBN: 978 1 4493 6737 4"), vec!["9781449367374"]);
         assert_eq!(find_all("isbn 9781449367374"), vec!["9781449367374"]);
+    }
+
+    #[test]
+    fn a_typeset_isbn_is_still_an_isbn() {
+        // non-breaking hyphens, en dashes and figure dashes, as books print them
+        assert_eq!(normalize("978\u{2011}1\u{2011}449\u{2011}36737\u{2011}4").as_deref(), Some("9781449367374"));
+        assert_eq!(find_all("ISBN 978\u{2013}1\u{2013}449\u{2013}36737\u{2013}4"), vec!["9781449367374"]);
+        // fullwidth digits, from a pdf typeset with a CJK font
+        assert_eq!(normalize("\u{FF19}\u{FF17}\u{FF18}\u{FF11}\u{FF14}\u{FF14}\u{FF19}\u{FF13}\u{FF16}\u{FF17}\u{FF13}\u{FF17}\u{FF14}").as_deref(), Some("9781449367374"));
+        // mathematical digits, from a book set in a maths font
+        let math: String = "9781449367374".chars().map(|c| char::from_u32(0x1D7CE + c.to_digit(10).unwrap()).unwrap()).collect();
+        assert_eq!(normalize(&math).as_deref(), Some("9781449367374"));
+        // a non-breaking space where a hyphen was expected
+        assert_eq!(normalize("978\u{00A0}1\u{00A0}449\u{00A0}36737\u{00A0}4").as_deref(), Some("9781449367374"));
     }
 
     #[test]

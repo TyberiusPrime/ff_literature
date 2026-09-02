@@ -176,6 +176,12 @@ what was printed before DOIs existed; those are identified by ISBN and get an
 }
 ```
 
+ISBNs copied out of a book are accepted however they are typeset — non-breaking
+hyphens, en dashes and figure dashes instead of `-`, and digits that are not
+ASCII at all (fullwidth, mathematical, Arabic-Indic and the other decimal
+blocks). All forms fold to the same 13 digits, so the same book pasted from two
+sources is still one entry. DOIs read out of a PDF get the same treatment.
+
 A book CrossRef does know gets both fields. ISBNs are stored as plain 13 digits:
 correct hyphenation depends on the registration group ranges, and a plausible
 looking but wrong grouping is worse than none. ISBN-10s are converted on the way

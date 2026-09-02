@@ -215,10 +215,12 @@ fn extract_from_text(path: &Path) -> Result<DoiHit, FflitError> {
 }
 
 fn find_doi(text: &str) -> Option<String> {
-    if let Some(c) = labelled_doi_regex().captures(text) {
+    // dois are ascii by definition, but the pdf they are printed in need not be
+    let text = crate::text::fold_typography(text);
+    if let Some(c) = labelled_doi_regex().captures(&text) {
         return Some(c[1].to_string());
     }
-    doi_regex().find(text).map(|m| m.as_str().to_string())
+    doi_regex().find(&text).map(|m| m.as_str().to_string())
 }
 
 fn clean_doi(mut s: String) -> String {
@@ -258,6 +260,15 @@ mod tests {
     fn bare_dois_still_work() {
         assert_eq!(find_doi("blah 10.1234/abc blah").as_deref(), Some("10.1234/abc"));
         assert_eq!(find_doi("no identifier here"), None);
+    }
+
+    #[test]
+    fn a_typeset_doi_is_still_a_doi() {
+        // an en dash inside the suffix, as a typesetter would render a hyphen
+        assert_eq!(
+            find_doi("doi: 10.1038/s41586\u{2013}021\u{2013}03819\u{2013}2").as_deref(),
+            Some("10.1038/s41586-021-03819-2")
+        );
     }
 
     #[test]

@@ -16,6 +16,58 @@ pub fn containment(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
     inter as f32 / a.len().min(b.len()) as f32
 }
 
+/// Zero of every decimal digit block a typeset book might use. Digits within a
+/// block are consecutive, so the offset from zero is the value.
+const DIGIT_ZEROS: &[u32] = &[
+    0x0030, // ascii
+    0x0660, // arabic-indic
+    0x06F0, // extended arabic-indic
+    0x0966, // devanagari
+    0x09E6, // bengali
+    0x0A66, // gurmukhi
+    0x0AE6, // gujarati
+    0x0B66, // oriya
+    0x0BE6, // tamil
+    0x0C66, // telugu
+    0x0CE6, // kannada
+    0x0D66, // malayalam
+    0x0E50, // thai
+    0x0ED0, // lao
+    0x0F20, // tibetan
+    0x1040, // myanmar
+    0x17E0, // khmer
+    0xFF10, // fullwidth
+    0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC, 0x1D7F6, // mathematical bold, double struck, sans, sans bold, mono
+];
+
+/// The ASCII value of a digit written in any of those blocks.
+pub fn digit_value(c: char) -> Option<u32> {
+    let cp = c as u32;
+    DIGIT_ZEROS
+        .iter()
+        .find(|&&zero| cp >= zero && cp < zero + 10)
+        .map(|&zero| cp - zero)
+}
+
+/// Undo typesetting: a number copied out of a book is not necessarily made of
+/// ASCII digits, and its "hyphens" are usually not hyphen-minus either.
+pub fn fold_typography(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            // hyphens, dashes and the minus sign
+            '\u{2010}'..='\u{2015}' | '\u{2043}' | '\u{2212}' | '\u{00AD}' | '\u{FE58}'
+            | '\u{FE63}' | '\u{FF0D}' => '-',
+            // spaces that are not the space
+            '\u{00A0}' | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}' => ' ',
+            '\u{FF38}' => 'X',
+            _ => match digit_value(c) {
+                Some(v) => char::from_digit(v, 10).unwrap_or(c),
+                None => c,
+            },
+        })
+        .collect()
+}
+
 /// Lowercase, de-accent, drop LaTeX markup, keep alphanumerics.
 pub fn normalize_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
