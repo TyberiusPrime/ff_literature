@@ -4,7 +4,7 @@ use colored::Colorize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-pub fn scan() -> anyhow::Result<()> {
+pub fn scan(tags: &[String]) -> anyhow::Result<()> {
     ensure_dirs()?;
     let mut db = bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
     let idx = search::open_or_create()?;
@@ -19,7 +19,7 @@ pub fn scan() -> anyhow::Result<()> {
 
     for path in pdfs {
         eprintln!("processing: {}", path.display());
-        match process_pdf(&path, None, None, &mut db, &idx) {
+        match process_pdf(&path, None, None, tags, &mut db, &idx) {
             Ok(()) => {}
             Err(e) => eprintln!("  error: {e}"),
         }
@@ -30,11 +30,16 @@ pub fn scan() -> anyhow::Result<()> {
 }
 
 /// Manually file a pdf whose identifier fflit could not work out itself.
-pub fn add_manually(path: &Path, doi: Option<&str>, isbn: Option<&str>) -> anyhow::Result<()> {
+pub fn add_manually(
+    path: &Path,
+    doi: Option<&str>,
+    isbn: Option<&str>,
+    tags: &[String],
+) -> anyhow::Result<()> {
     ensure_dirs()?;
     let mut db = bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
     let idx = search::open_or_create()?;
-    process_pdf(path, doi, isbn, &mut db, &idx)?;
+    process_pdf(path, doi, isbn, tags, &mut db, &idx)?;
     db.write(Path::new("./literature.bibtex"))?;
     Ok(())
 }
@@ -43,6 +48,7 @@ fn process_pdf(
     path: &Path,
     doi_override: Option<&str>,
     isbn_override: Option<&str>,
+    tags: &[String],
     db: &mut bibtex::BibDatabase,
     idx: &search::SearchIndex,
 ) -> anyhow::Result<()> {
@@ -121,6 +127,9 @@ fn process_pdf(
     if let Some(abs) = &meta.abstract_text {
         fields.push(("abstract".into(), abs.clone()));
     }
+    if !tags.is_empty() {
+        fields.push(("keywords".into(), tags.join(", ")));
+    }
     fields.push(("sha256".into(), sha));
 
     // 5. Move PDF into place
@@ -141,9 +150,15 @@ fn process_pdf(
         .filter_map(|a| a.family.as_deref())
         .collect::<Vec<_>>()
         .join(", ");
-    search::add_document(idx, &key, &meta.title, &authors_str, &dest)?;
+    search::add_document(idx, &key, &meta.title, &authors_str, &tags.join(", "), &dest)?;
 
-    eprintln!("  added → ./pdfs/{key}.pdf");
+    eprintln!(
+        "  added → ./pdfs/{key}.pdf{}",
+        match tags.is_empty() {
+            true => String::new(),
+            false => format!(" [{}]", tags.join(", ")),
+        }
+    );
     Ok(())
 }
 

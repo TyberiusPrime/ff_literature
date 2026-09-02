@@ -38,6 +38,8 @@ PDFs are placed in pdfs (or in failed_pdfs if no doi extraction was possible).
 
 ```
 fflit scan
+fflit scan --tag immunology --tag mouse
+fflit scan --tag "immunology, mouse"
 ```
 Process every PDF in `./incoming/`. For each file:
 1. SHA-256 checked against `literature.bibtex` — duplicate goes to `duplicates/`
@@ -110,9 +112,30 @@ processing: ./incoming/scan_0042.pdf
 
 ```
 fflit add path/to/paper.pdf --doi 10.xxxx/xxxxx
-fflit add path/to/book.pdf --isbn 978-0-262-03384-8
+fflit add path/to/book.pdf --isbn 978-0-262-03384-8 --tag methods
 ```
 Manually file a PDF when identification fails. ISBN-10 is accepted and converted.
+
+### Tags
+
+`--tag` puts a `keywords` field on everything a run files — drop a batch of
+papers on one topic into `incoming/`, tag the batch in one go. Tags are searched
+alongside title, authors and full text, and shown after each hit, with no
+reindex needed:
+
+```
+$ fflit scan --tag "transformers, to-read"
+  added → ./pdfs/Vaswani2017Attention.pdf [transformers, to-read]
+
+$ fflit search to-read
+./pdfs/Vaswani2017Attention.pdf  Attention Is All You Need — Vaswani  [transformers, to-read]
+```
+
+fflit only ever writes tags when it files a pdf. Changing the tags of something
+already in the library is an edit to `literature.bibtex` followed by
+`fflit reindex --tags-only`. A pdf in a tagged batch that turns out to be a
+duplicate is filed to `duplicates/` as usual and the entry you already have is
+left exactly as it is.
 
 ```
 fflit search "query terms"

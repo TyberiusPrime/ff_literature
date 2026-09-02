@@ -52,12 +52,11 @@ pub fn add_document(
     bibkey: &str,
     title: &str,
     authors: &str,
+    keywords: &str,
     pdf_path: &Path,
 ) -> anyhow::Result<()> {
-    // a freshly filed paper has no keywords yet; they are hand written into
-    // literature.bibtex and picked up by `fflit reindex --tags-only`
     let mut writer: IndexWriter = idx.index.writer(50_000_000)?;
-    let doc = build_document(idx, bibkey, title, authors, "", pdf_path);
+    let doc = build_document(idx, bibkey, title, authors, keywords, pdf_path);
     writer.add_document(doc)?;
     writer.commit()?;
     Ok(())

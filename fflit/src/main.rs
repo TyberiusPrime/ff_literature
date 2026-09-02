@@ -27,7 +27,12 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Scan ./incoming/ for new PDFs, extract DOIs, fetch metadata, file them
-    Scan,
+    Scan {
+        /// tag everything filed by this run with this keyword (repeatable, or
+        /// comma separated)
+        #[arg(long = "tag", value_name = "KEYWORD", value_delimiter = ',')]
+        tags: Vec<String>,
+    },
     /// Manually add a PDF with a known DOI or ISBN
     // a group rather than required_unless_present, so that leaving both out
     // reports both as the alternatives they are
@@ -41,6 +46,9 @@ enum Command {
         /// resolved through OpenLibrary
         #[arg(long, value_name = "ISBN")]
         isbn: Option<String>,
+        /// tag the entry with this keyword (repeatable, or comma separated)
+        #[arg(long = "tag", value_name = "KEYWORD", value_delimiter = ',')]
+        tags: Vec<String>,
     },
     /// Full-text search; prints matching ./pdfs/<key>.pdf paths with title and first author
     Search {
@@ -83,12 +91,25 @@ enum Command {
     },
 }
 
+/// Drop blanks and repeats, so `--tag "a, ,A"` is just `a`.
+fn clean_tags(tags: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if tag.is_empty() || out.iter().any(|t: &String| t.eq_ignore_ascii_case(tag)) {
+            continue;
+        }
+        out.push(tag.to_string());
+    }
+    out
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Scan => scan::scan()?,
-        Command::Add { path, doi, isbn } => {
-            scan::add_manually(&path, doi.as_deref(), isbn.as_deref())?
+        Command::Scan { tags } => scan::scan(&clean_tags(tags))?,
+        Command::Add { path, doi, isbn, tags } => {
+            scan::add_manually(&path, doi.as_deref(), isbn.as_deref(), &clean_tags(tags))?
         }
         Command::Search { query, context } => search::search(&query, context)?,
         Command::Reindex { tags_only } => match tags_only {
