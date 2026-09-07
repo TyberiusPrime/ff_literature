@@ -13,7 +13,7 @@ use std::time::Duration;
 /// shaped like a user agent string, because filters that never read past the
 /// first token refuse a bare tool name.
 pub const USER_AGENT: &str =
-    "Mozilla/5.0 (compatible; fflit/0.1; +https://github.com/fflit; mailto:john@coonabibba.de)";
+    "Mozilla/5.0 (compatible; fflit/0.1; +https://github.com/ff_literature; mailto:john@coonabibba.de)";
 
 static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
 

@@ -9,7 +9,7 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
+const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
 /// NCBI's converter takes this many ids at a time.
 const BATCH: usize = 200;
 

@@ -6,7 +6,7 @@
 
 use anyhow::Context;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
+const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
 const EMAIL: &str = "john@coonabibba.de";
 
 /// One retry, because a slow or briefly unreachable API should not cost a paper

@@ -1,7 +1,7 @@
 use crate::metadata::{strip_tags, Author, WorkMetadata};
 use anyhow::Context;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/fflit)";
+const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
 
 pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
     let url = format!("https://api.crossref.org/works/{}", doi_str);
