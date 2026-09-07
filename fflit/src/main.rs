@@ -7,6 +7,7 @@ mod diff;
 mod discover;
 mod error;
 mod fetch;
+mod http;
 mod isbn;
 mod metadata;
 mod openlibrary;
@@ -90,10 +91,10 @@ enum Command {
         /// report what is available without downloading anything
         #[arg(long)]
         dry_run: bool,
-        /// for what is not free, also try the publisher's own pdf — only
-        /// useful from a network your library subscribes from
+        /// do not try the publisher's own pdf for what is not free — off a
+        /// subscribing network it is a request that was never going to work
         #[arg(long)]
-        publisher: bool,
+        no_publisher: bool,
         /// write everything that could not be fetched to this file, as
         /// key/title/url, to work through by hand
         #[arg(long, value_name = "FILE")]
@@ -157,8 +158,8 @@ fn main() -> anyhow::Result<()> {
             true => search::reindex_tags()?,
             false => search::reindex()?,
         },
-        Command::Fetch { bibtex, into, limit, dry_run, publisher, worklist, repository } => {
-            fetch::fetch(&bibtex, &into, limit, dry_run, publisher, worklist.as_deref(), &repository)?
+        Command::Fetch { bibtex, into, limit, dry_run, no_publisher, worklist, repository } => {
+            fetch::fetch(&bibtex, &into, limit, dry_run, !no_publisher, worklist.as_deref(), &repository)?
         }
         Command::Diff {
             a,

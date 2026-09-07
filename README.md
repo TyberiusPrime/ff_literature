@@ -179,7 +179,7 @@ puts the uncertain ones in there too.
 fflit fetch missing.bibtex
 fflit fetch missing.bibtex --dry-run
 fflit fetch missing.bibtex --limit 20 --into ./incoming
-fflit fetch missing.bibtex --publisher --worklist todo.tsv
+fflit fetch missing.bibtex --no-publisher --worklist todo.tsv
 ```
 Download the open access copies of everything in a bibtex.
 
@@ -203,7 +203,7 @@ subtraction:
 
 ```sh
 fflit diff theirs.bibtex . --output missing.bibtex   # what the library lacks
-fflit fetch missing.bibtex                           # get what is free
+fflit fetch missing.bibtex                           # get what it can
 fflit scan --tag from-unpaywall                      # file it
 ```
 
@@ -232,20 +232,59 @@ browser, so those downloads usually fail; fflit reports how many of your papers
 are free to read there and puts the links in the worklist rather than pretending
 to be a browser to get around it.
 
-**`--publisher`** is for when you are on a network your library subscribes from.
-It resolves the DOI, reads the `citation_pdf_url` that publishers advertise for
-indexing, and asks for that file — no circumvention, and off the subscribing
-network it just gets a paywall page and gives up. Expect partial success:
+**The publisher's own copy is tried too**, for what nobody gives away free —
+this is on by default, since on a subscribing network it is where most of the
+library actually comes from. It resolves the DOI and asks for the pdf the way
+the PDF button on that page would: no circumvention, and off the subscribing
+network it just gets a paywall page and gives up. `--no-publisher` turns it off,
+which is worth doing off campus, where those requests were never going to work.
 
-| publisher | landing page, plain HTTP client |
+Three things decide whether it succeeds, and fflit does all three:
+
+1. **The `citation_pdf_url` tag** publishers advertise for indexing, where the
+   page has one — Nature, PLOS, OUP and most of the society journals.
+2. **The publisher's own url scheme** where it does not, because the file is
+   still one predictable url away from the page you are already on:
+   `link.springer.com/content/pdf/<doi>.pdf`, `…/doi/pdf/<doi>` for the Atypon
+   sites (Wiley — `pdfdirect`, since plain `/doi/pdf/` is a javascript viewer —
+   Taylor & Francis, Sage, ACS, Science, ACM), `<article>.pdf` for Nature,
+   `<article>/pdf` for MDPI and Cambridge, and the PII rather than the DOI for
+   Elsevier. At most three guesses at any one publisher.
+3. **One session for both requests.** A landing page sets a cookie and the pdf
+   request that follows has to carry it back, with a `Referer` saying where it
+   came from. This is the whole of the difference in "works in my browser,
+   403 to a script" on a network that is already entitled to the file.
+
+Expect partial success — a run across Springer, Wiley, Sage, Taylor & Francis,
+MDPI and Elsevier gets six of ten:
+
+| publisher | from a subscribing network |
 | --- | --- |
-| Nature, PLOS | serves HTML, tag present ✓ |
-| Elsevier | JS redirect, no tag |
-| ACM, OUP | 403 Cloudflare challenge |
+| Nature, Springer, Wiley, Sage, T&F | pdf ✓ |
+| Elsevier | offers the url, refuses the file |
+| MDPI, ACM | 403 Cloudflare challenge |
 
 Cloudflare challenges the client rather than the IP, so a subscribing network
-does not help there. Two seconds between publisher requests, deliberately:
-publishers watch for exactly this traffic and block whole campuses over it.
+does not help there.
+
+**No publisher is asked twice within a minute**, deliberately: publishers watch
+for exactly this traffic and block whole campuses over it. That would make a
+bibliography full of one publisher unbearable if it were a plain sleep, so it is
+not one. A paper whose publisher was just asked goes on a pile, and the run
+takes any paper whose publisher is free instead — ten Elsevier papers in a row
+do not hold up the Springer paper behind them. The run only ever sleeps when
+every paper left is waiting on a publisher that was just asked.
+
+The publisher is not known until a DOI has been resolved once, so it is
+remembered against the DOI prefix — the registrant — which is what tells the
+second Elsevier paper of a run where it is going before it asks. Two registrants
+that resolve to the same publisher (Wiley uses both `10.1111` and `10.1002`)
+share its minute, since it is one publisher either way.
+
+The papers therefore come back out of order, and the report is put back into
+bibtex order at the end rather than left in the order the publishers answered. The user agent says what fflit is and
+how to reach its author rather than pretending to be Chrome, so a publisher who
+would rather it stopped can say so.
 
 **What could not be fetched is printed as links to chase up yourself** — every
 place fflit tried, not just one, since those are the pages you would open. Up to
@@ -268,7 +307,9 @@ to chase up yourself:
 
 The grouping is the useful part: a Cloudflare challenge or an Elsevier
 javascript redirect is nothing to a browser, so those are worth clicking, while
-`closed access` means nobody has a copy to give. Session noise publishers hang
+`closed access` means nobody had a copy to give and there was nothing to try —
+a publisher that offered a pdf url and then refused the file is counted as
+`failed` instead, because that one usually opens in a browser. Session noise publishers hang
 off the url (`?error=cookies_not_supported&code=…`) is stripped, since it is
 stale by the time anyone clicks. A repository landing page that refused a script
 will usually hand a person the pdf.
@@ -277,7 +318,7 @@ will usually hand a person the pdf.
 `key/title/url/found/reason`, one row per link:
 
 ```sh
-fflit fetch missing.bibtex --publisher --worklist chase.tsv
+fflit fetch missing.bibtex --worklist chase.tsv
 cut -f3 chase.tsv | tail -n +2 | xargs -n1 -P4 firefox     # open the lot
 grep 'browser' chase.tsv | cut -f3                          # only what a browser gets through
 awk -F'\t' '$5 ~ /pubmed/' chase.tsv | cut -f3             # only pubmed central
