@@ -268,7 +268,11 @@ Cloudflare challenges the client rather than the IP, so a subscribing network
 does not help there.
 
 **No publisher is asked twice within a minute**, deliberately: publishers watch
-for exactly this traffic and block whole campuses over it. That would make a
+for exactly this traffic and block whole campuses over it. A paper's landing
+page and the pdf link on it are the exception, since those are one visit — a
+browser loads the page and clicks the button a second later, not a minute
+later. It is a second *guess* at a publisher that has already refused
+something, and the next paper from the same publisher, that wait. That would make a
 bibliography full of one publisher unbearable if it were a plain sleep, so it is
 not one. A paper whose publisher was just asked goes on a pile, and the run
 takes any paper whose publisher is free instead — ten Elsevier papers in a row

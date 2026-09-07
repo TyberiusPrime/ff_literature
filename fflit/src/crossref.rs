@@ -1,13 +1,11 @@
+use crate::http;
 use crate::metadata::{strip_tags, Author, WorkMetadata};
 use anyhow::Context;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
-
 pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
     let url = format!("https://api.crossref.org/works/{}", doi_str);
-    let response: serde_json::Value = reqwest::blocking::Client::new()
+    let response: serde_json::Value = http::client()
         .get(&url)
-        .header("User-Agent", USER_AGENT)
         .send()
         .with_context(|| format!("HTTP request failed for DOI {doi_str}"))?
         .error_for_status()
@@ -21,9 +19,8 @@ pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
 /// Free text bibliographic search: how a pdf that never states its DOI can
 /// still be identified. Best matches first, as CrossRef ranks them.
 pub fn search(query: &str, rows: usize) -> anyhow::Result<Vec<WorkMetadata>> {
-    let response: serde_json::Value = reqwest::blocking::Client::new()
+    let response: serde_json::Value = http::client()
         .get("https://api.crossref.org/works")
-        .header("User-Agent", USER_AGENT)
         .query(&[
             ("query.bibliographic", query),
             ("rows", &rows.to_string()),
@@ -45,9 +42,8 @@ pub fn search(query: &str, rows: usize) -> anyhow::Result<Vec<WorkMetadata>> {
 /// through the chapters of an edited volume: a chapter record would describe
 /// the wrong thing for a whole-book pdf.
 pub fn fetch_isbn(isbn13: &str) -> anyhow::Result<Option<WorkMetadata>> {
-    let response: serde_json::Value = reqwest::blocking::Client::new()
+    let response: serde_json::Value = http::client()
         .get("https://api.crossref.org/works")
-        .header("User-Agent", USER_AGENT)
         .query(&[
             ("filter", format!("isbn:{isbn13}").as_str()),
             ("rows", "20"),

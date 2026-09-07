@@ -6,10 +6,10 @@
 //! therefore offers the link and lets the download fail honestly, rather than
 //! pretending to be a browser to get around it.
 
+use crate::http;
 use anyhow::Context;
 use std::collections::HashMap;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
 /// NCBI's converter takes this many ids at a time.
 const BATCH: usize = 200;
 
@@ -45,14 +45,13 @@ fn resolve(chunk: &[String], out: &mut HashMap<String, String>) {
 }
 
 fn lookup(dois: &[String]) -> anyhow::Result<Vec<(String, String)>> {
-    let json: serde_json::Value = reqwest::blocking::Client::new()
+    let json: serde_json::Value = http::client()
         .get("https://pmc.ncbi.nlm.nih.gov/tools/idconv/api/v1/articles/")
-        .header("User-Agent", USER_AGENT)
         .query(&[
             ("ids", dois.join(",").as_str()),
             ("format", "json"),
             ("tool", "fflit"),
-            ("email", "john@coonabibba.de"),
+            ("email", http::CONTACT_EMAIL),
         ])
         .timeout(std::time::Duration::from_secs(60))
         .send()

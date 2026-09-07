@@ -1,6 +1,7 @@
 //! OpenLibrary: the books no DOI registry knows about — technical, trade, and
 //! most of what was printed before publishers started minting DOIs.
 
+use crate::http;
 use crate::metadata::{author_from_name, Author, WorkMetadata};
 use anyhow::{bail, Context};
 use regex::Regex;
@@ -8,13 +9,10 @@ use std::sync::OnceLock;
 
 static YEAR_RE: OnceLock<Regex> = OnceLock::new();
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
-
 pub fn fetch(isbn13: &str) -> anyhow::Result<WorkMetadata> {
     let key = format!("ISBN:{isbn13}");
-    let response: serde_json::Value = reqwest::blocking::Client::new()
+    let response: serde_json::Value = http::client()
         .get("https://openlibrary.org/api/books")
-        .header("User-Agent", USER_AGENT)
         .query(&[("bibkeys", key.as_str()), ("format", "json"), ("jscmd", "data")])
         .send()
         .with_context(|| format!("HTTP request failed for ISBN {isbn13}"))?

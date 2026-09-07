@@ -1,16 +1,14 @@
 //! DataCite: arXiv preprints, Zenodo deposits, datasets — everything CrossRef
 //! does not register.
 
+use crate::http;
 use crate::metadata::{author_from_name, Author, WorkMetadata};
 use anyhow::Context;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
-
 pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
     let url = format!("https://api.datacite.org/dois/{}", doi_str);
-    let response: serde_json::Value = reqwest::blocking::Client::new()
+    let response: serde_json::Value = http::client()
         .get(&url)
-        .header("User-Agent", USER_AGENT)
         .send()
         .with_context(|| format!("HTTP request failed for DOI {doi_str}"))?
         .error_for_status()

@@ -4,10 +4,8 @@
 //! every location it has, which matters because the first one is not always the
 //! one that will actually hand over a file.
 
+use crate::http;
 use anyhow::Context;
-
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
-const EMAIL: &str = "john@coonabibba.de";
 
 /// One retry, because a slow or briefly unreachable API should not cost a paper
 /// in a run of a thousand.
@@ -45,10 +43,9 @@ pub fn pdf_locations(doi: &str) -> anyhow::Result<Vec<OaCopy>> {
     // some records take fifteen seconds; over a thousand papers a stingy
     // timeout loses papers that were only slow
     let response = with_retry(|| {
-        reqwest::blocking::Client::new()
+        http::client()
             .get(&url)
-            .header("User-Agent", USER_AGENT)
-            .query(&[("email", EMAIL)])
+            .query(&[("email", http::CONTACT_EMAIL)])
             .timeout(std::time::Duration::from_secs(60))
             .send()
     })

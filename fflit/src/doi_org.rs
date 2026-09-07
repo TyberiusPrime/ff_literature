@@ -5,17 +5,16 @@
 //! fallback therefore covers the agencies fflit does not speak to directly,
 //! without a new API per agency.
 
+use crate::http;
 use crate::metadata::{author_from_name, strip_tags, Author, WorkMetadata};
 use anyhow::Context;
 
-const USER_AGENT: &str = "fflit/0.1 (mailto:john@coonabibba.de; https://github.com/ff_literature)";
 const CSL_JSON: &str = "application/vnd.citationstyles.csl+json";
 
 pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
     let url = format!("https://doi.org/{}", doi_str);
-    let response = reqwest::blocking::Client::new()
+    let response = http::client()
         .get(&url)
-        .header("User-Agent", USER_AGENT)
         .header("Accept", CSL_JSON)
         .send()
         .with_context(|| format!("HTTP request failed for DOI {doi_str}"))?
@@ -34,9 +33,8 @@ pub fn fetch(doi_str: &str) -> anyhow::Result<WorkMetadata> {
 /// "this DOI does not exist".
 pub fn registration_agency(doi_str: &str) -> Option<String> {
     let url = format!("https://doi.org/ra/{}", doi_str);
-    let response: serde_json::Value = reqwest::blocking::Client::new()
+    let response: serde_json::Value = http::client()
         .get(&url)
-        .header("User-Agent", USER_AGENT)
         .send()
         .ok()?
         .json()

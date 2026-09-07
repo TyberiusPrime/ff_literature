@@ -250,9 +250,9 @@ struct Pending {
     pmcid: Option<String>,
 }
 
-/// One paper's turn at its publisher, which takes as many requests as it takes:
-/// the landing page first, then each url the publisher's own scheme suggests,
-/// one per turn, so that nothing asks a publisher twice in a row.
+/// One paper's turn at its publisher: the landing page and the pdf link it
+/// advertises together, then any further guess on a turn of its own, so that a
+/// publisher is never asked to guess again while it is still cooling off.
 struct Task {
     /// where it came in the bibtex, so the report can be put back in order
     order: usize,
@@ -363,7 +363,10 @@ fn next_ready(pile: &[Task], throttle: &Throttle) -> Option<usize> {
     pile.iter().position(|t| throttle.ready_at(&t.pending.doi).is_none())
 }
 
-/// One request at one publisher: the landing page, or the next url it suggested.
+/// One turn at one publisher: the landing page and the pdf link on it, which
+/// are one visit — a browser loads the page and clicks the button a second
+/// later, not a minute later — and after that one guess per turn, because a
+/// guess only happens once that publisher has already refused something.
 fn step(task: &mut Task, throttle: &mut Throttle) -> Outcome {
     if !task.asked {
         task.asked = true;
@@ -371,7 +374,6 @@ fn step(task: &mut Task, throttle: &mut Throttle) -> Outcome {
         if let Some(p) = &task.probe {
             throttle.hit(&task.pending.doi, &p.landing_url);
         }
-        return Outcome::Again;
     }
     let Some(probe) = &task.probe else { return Outcome::Again };
     let Some(url) = probe.candidates.get(task.next) else { return Outcome::Again };
