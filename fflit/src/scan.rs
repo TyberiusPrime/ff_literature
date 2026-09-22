@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 pub fn scan(tags: &[String]) -> anyhow::Result<()> {
     ensure_dirs()?;
-    let mut db = bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
+    let mut db = bibtex::BibDatabase::load(Path::new(bibtex::LITERATURE_FILE))?;
     let idx = search::open_or_create()?;
 
     let incoming = PathBuf::from("./incoming");
@@ -25,7 +25,7 @@ pub fn scan(tags: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    db.write(Path::new("./literature.bibtex"))?;
+    db.write(Path::new(bibtex::LITERATURE_FILE))?;
     Ok(())
 }
 
@@ -37,10 +37,10 @@ pub fn add_manually(
     tags: &[String],
 ) -> anyhow::Result<()> {
     ensure_dirs()?;
-    let mut db = bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
+    let mut db = bibtex::BibDatabase::load(Path::new(bibtex::LITERATURE_FILE))?;
     let idx = search::open_or_create()?;
     process_pdf(path, doi, isbn, tags, &mut db, &idx)?;
-    db.write(Path::new("./literature.bibtex"))?;
+    db.write(Path::new(bibtex::LITERATURE_FILE))?;
     Ok(())
 }
 

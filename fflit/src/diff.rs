@@ -4,7 +4,7 @@
 //! when nothing in the second file looks anything like it — everything with a
 //! plausible counterpart lands in the "uncertain" bucket for a human to look at.
 
-use crate::bibtex::{BibDatabase, BibEntry};
+use crate::bibtex::{self, BibDatabase, BibEntry};
 use crate::text::{containment, extract_year, family_eq, first_author_family, normalize_text, token_set};
 use anyhow::{bail, Context};
 use colored::Colorize;
@@ -91,7 +91,7 @@ pub fn diff(
 /// would report the whole of `a` as missing.
 fn resolve(path: &Path) -> anyhow::Result<PathBuf> {
     let file = if path.is_dir() {
-        path.join("literature.bibtex")
+        path.join(bibtex::LITERATURE_FILE)
     } else {
         path.to_path_buf()
     };

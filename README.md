@@ -6,7 +6,7 @@ Personal literature 'manager'.
 * works out what each PDF is — DOI, arXiv id, ISBN, or by asking about its title page
 * fetches metadata from CrossRef, DataCite, doi.org or OpenLibrary 
 * renames/moves files to `pdfs/<BibKey>.pdf`
-* maintains a sorted `literature.bibtex`. 
+* maintains a sorted `literature.bib`. 
 
 Full-text search via tantivy.
 
@@ -32,7 +32,7 @@ Put your pdfs into directory/incoming.
 
 Run 'fflit scan'.
 
-directory/literature.bibtex get's updated.
+directory/literature.bib get's updated.
 
 PDFs are placed in pdfs (or in failed_pdfs if no doi extraction was possible).
 
@@ -42,10 +42,10 @@ fflit scan --tag immunology --tag mouse
 fflit scan --tag "immunology, mouse"
 ```
 Process every PDF in `./incoming/`. For each file:
-1. SHA-256 checked against `literature.bibtex` — duplicate goes to `duplicates/`
+1. SHA-256 checked against `literature.bib` — duplicate goes to `duplicates/`
 2. Identified (see below); failure → `failed_pdfs/`
 3. Metadata fetched (see below); fetch failure → `failed_pdfs/`
-4. File moved to `pdfs/<Author><Year><Word>.pdf` and entry appended to `literature.bibtex`
+4. File moved to `pdfs/<Author><Year><Word>.pdf` and entry appended to `literature.bib`
 
 ### Where metadata comes from
 
@@ -132,7 +132,7 @@ $ fflit search to-read
 ```
 
 fflit only ever writes tags when it files a pdf. Changing the tags of something
-already in the library is an edit to `literature.bibtex` followed by
+already in the library is an edit to `literature.bib` followed by
 `fflit reindex --tags-only`. A pdf in a tagged batch that turns out to be a
 duplicate is filed to `duplicates/` as usual and the entry you already have is
 left exactly as it is.
@@ -148,7 +148,7 @@ Full-text search. Prints matching `./pdfs/<key>.pdf` with title and first author
 fflit assemble <repository> <output.bibtex> [--pdf-dir DIR] paper.typ chapter.typ ...
 ```
 Scan typst files for `@key` citations and collect the matching entries from
-`<repository>/literature.bibtex` into `<output.bibtex>`. With `--pdf-dir`, the
+`<repository>/literature.bib` into `<output.bibtex>`. With `--pdf-dir`, the
 cited `<repository>/pdfs/<key>.pdf` are copied there as well.
 
 Package specs (`@preview/...`), mail addresses, raw blocks and labels the
@@ -161,7 +161,7 @@ files are still written. A cited entry without a pdf is a note only.
 fflit diff <a.bibtex> <b.bibtex> [--output missing.bibtex] [--include-uncertain]
 ```
 Which entries of `a` are not in `b`? Either side may also be an fflit repository
-directory, in which case its `literature.bibtex` is used.
+directory, in which case its `literature.bib` is used.
 
 Entries are matched by DOI first, then by normalized title (LaTeX accents,
 braces, case and punctuation are ignored). Everything else is scored by title
@@ -331,14 +331,14 @@ awk -F'\t' '$5 ~ /pubmed/' chase.tsv | cut -f3             # only pubmed central
 Files are named after their citation key, so an interrupted run resumes where it
 stopped — already downloaded entries are skipped. `--dry-run` reports what is
 available without downloading, `--limit` stops after N lookups. Nothing here
-touches `literature.bibtex`; the pdfs land in `incoming/` and are `fflit scan`'s
+touches `literature.bib`; the pdfs land in `incoming/` and are `fflit scan`'s
 problem from there.
 
 ```
 fflit repair
 fflit repair --dry-run
 ```
-Fix a `literature.bibtex` that no longer parses. The usual cause is unbalanced
+Fix a `literature.bib` that no longer parses. The usual cause is unbalanced
 braces in a field value: values are written inside `{…}`, so one brace that
 never closes — or closes nothing — swallows the rest of that entry and every
 entry after it. Abstracts are the usual source; markup arrives from the registry
@@ -346,14 +346,14 @@ already mangled, and a single stray `}` in `O(n log} | Σ |)` is enough.
 
 ```
 $ fflit scan
-Error: parsing ./literature.bibtex: unbalanced braces in one entry
+Error: parsing ./literature.bib: unbalanced braces in one entry
   line 7935: @{Vlimki2007Compressed}, in the abstract field
-run `fflit repair ./literature.bibtex` to fix them
+run `fflit repair ./literature.bib` to fix them
 
 $ fflit repair
 one entry with unbalanced braces:
   line 7935: Vlimki2007Compressed, in the abstract field
-1 field(s) fixed in ./literature.bibtex (previous version kept as ./literature.bibtex.bak)
+1 field(s) fixed in ./literature.bib (previous version kept as ./literature.bib.bak)
 ```
 
 Unmatched braces are dropped rather than escaped — bibtex parsers count raw
@@ -374,7 +374,7 @@ fflit reindex --tags-only
 Rebuild the tantivy full-text index from scratch (needed after first use or schema changes).
 
 `--tags-only` is the cheap variant for keywords. Tags are not managed by fflit —
-write a `keywords = {immunology, mouse}` field into `literature.bibtex` by hand,
+write a `keywords = {immunology, mouse}` field into `literature.bib` by hand,
 then run this to make them searchable. Only entries whose tags actually differ
 from the index are rewritten, so it costs one `pdftotext` per edited entry
 instead of one per paper, and nothing at all when there is nothing to do.
@@ -390,7 +390,7 @@ each hit. Order and case in the field are not significant.
 ├── pdfs/              # filed papers: Author2024Word.pdf
 ├── duplicates/        # sha256 or DOI already known
 ├── failed_pdfs/       # no DOI found, or CrossRef returned nothing
-├── literature.bibtex  # sorted BibTeX database
+├── literature.bib  # sorted BibTeX database
 └── search_index/      # tantivy index (do not edit)
 ```
 

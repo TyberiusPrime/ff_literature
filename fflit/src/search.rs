@@ -62,7 +62,7 @@ pub fn add_document(
     Ok(())
 }
 
-/// Bring the indexed keywords in line with `literature.bibtex`, touching only
+/// Bring the indexed keywords in line with `literature.bib`, touching only
 /// the documents whose tags actually changed. Everything else — full text above
 /// all — is left alone, so this costs one `pdftotext` per edited entry rather
 /// than one per paper.
@@ -75,7 +75,7 @@ pub fn reindex_tags() -> anyhow::Result<()> {
     let title_f = idx.schema.get_field("title").unwrap();
     let authors_f = idx.schema.get_field("authors").unwrap();
 
-    let db = crate::bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
+    let db = crate::bibtex::BibDatabase::load(Path::new(crate::bibtex::LITERATURE_FILE))?;
 
     let reader = idx.index.reader()?;
     let searcher = reader.searcher();
@@ -271,7 +271,7 @@ pub fn reindex() -> anyhow::Result<()> {
     let fulltext_f = schema.get_field("fulltext").unwrap();
     let preview_f = schema.get_field("preview").unwrap();
 
-    let db = crate::bibtex::BibDatabase::load(Path::new("./literature.bibtex"))?;
+    let db = crate::bibtex::BibDatabase::load(Path::new(crate::bibtex::LITERATURE_FILE))?;
     let meta: std::collections::HashMap<&str, (&str, &str, &str)> = db
         .entries
         .iter()

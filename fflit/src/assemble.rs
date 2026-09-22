@@ -1,4 +1,4 @@
-use crate::bibtex::BibDatabase;
+use crate::bibtex::{self, BibDatabase};
 use anyhow::{bail, Context};
 use colored::Colorize;
 use regex::Regex;
@@ -33,9 +33,13 @@ pub fn assemble(
     pdf_dir: Option<&Path>,
     typst_files: &[PathBuf],
 ) -> anyhow::Result<bool> {
-    let lit = repo.join("literature.bibtex");
+    let lit = repo.join(bibtex::LITERATURE_FILE);
     if !lit.exists() {
-        bail!("{} is not an fflit repository (no literature.bibtex)", repo.display());
+        bail!(
+            "{} is not an fflit repository (no {})",
+            repo.display(),
+            bibtex::LITERATURE_FILE
+        );
     }
     let db = BibDatabase::load(&lit)?;
 

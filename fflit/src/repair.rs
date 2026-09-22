@@ -1,4 +1,4 @@
-//! Making a broken literature.bibtex readable again.
+//! Making a broken literature.bib readable again.
 //!
 //! Works on lines rather than by parsing, because the file that needs repairing
 //! is by definition one that will not parse. fflit writes every field on a line

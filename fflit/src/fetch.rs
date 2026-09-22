@@ -2,9 +2,9 @@
 //!
 //! Files land in `incoming/` under the citation key they came from and are then
 //! `fflit scan`'s problem like any other pdf — this module does not touch
-//! `literature.bibtex`.
+//! `literature.bib`.
 
-use crate::bibtex::{is_doi, normalize_doi, BibDatabase, BibEntry};
+use crate::bibtex::{self, is_doi, normalize_doi, BibDatabase, BibEntry};
 use crate::text::normalize_text;
 use crate::unpaywall::{self, OaCopy};
 use crate::http::{self, host_of};
@@ -51,7 +51,7 @@ struct Known {
 
 impl Known {
     fn load(repository: &Path) -> anyhow::Result<Self> {
-        Ok(Self::from_db(BibDatabase::load(&repository.join("literature.bibtex"))?))
+        Ok(Self::from_db(BibDatabase::load(&repository.join(bibtex::LITERATURE_FILE))?))
     }
 
     fn from_db(db: BibDatabase) -> Self {
@@ -97,7 +97,7 @@ pub fn fetch(
         eprintln!(
             "{}: no entries in {} — nothing to subtract",
             "note".yellow(),
-            repository.join("literature.bibtex").display()
+            repository.join(bibtex::LITERATURE_FILE).display()
         );
     }
     if !dry_run {

@@ -3,6 +3,9 @@ use nom_bibtex::Bibtex;
 use std::collections::HashSet;
 use std::path::Path;
 
+/// The bibtex database of an fflit repository, kept in its working directory.
+pub const LITERATURE_FILE: &str = "literature.bib";
+
 #[derive(Clone)]
 pub struct BibEntry {
     pub entry_type: String,
@@ -431,7 +434,7 @@ mod tests {
 
         let dir = std::env::temp_dir().join(format!("fflit_brace_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("literature.bibtex");
+        let path = dir.join(LITERATURE_FILE);
         db.write(&path).unwrap();
 
         // the whole point: it can be read back, and the entry after it survives

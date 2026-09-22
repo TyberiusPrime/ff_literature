@@ -63,10 +63,10 @@ enum Command {
         #[arg(long)]
         context: bool,
     },
-    /// Fix a literature.bibtex that no longer parses
+    /// Fix a literature.bib that no longer parses
     Repair {
         /// bibtex to repair; the previous version is kept as .bibtex.bak
-        #[arg(default_value = "./literature.bibtex")]
+        #[arg(default_value = bibtex::LITERATURE_FILE)]
         bibtex: PathBuf,
         /// report what would change without writing anything
         #[arg(long)]
@@ -74,7 +74,7 @@ enum Command {
     },
     /// Rebuild the full-text search index from ./pdfs/
     Reindex {
-        /// only refresh the keywords from literature.bibtex, leave the text alone
+        /// only refresh the keywords from literature.bib, leave the text alone
         #[arg(long)]
         tags_only: bool,
     },
@@ -99,7 +99,7 @@ enum Command {
         /// key/title/url, to work through by hand
         #[arg(long, value_name = "FILE")]
         worklist: Option<PathBuf>,
-        /// library to subtract first: anything already in its literature.bibtex
+        /// library to subtract first: anything already in its literature.bib
         /// is not downloaded again
         #[arg(long, value_name = "DIR", default_value = ".")]
         repository: PathBuf,
@@ -119,7 +119,7 @@ enum Command {
     },
     /// Collect the references cited by typst documents into a standalone bibtex (+ pdfs)
     Assemble {
-        /// fflit repository to pull entries from (the directory holding literature.bibtex)
+        /// fflit repository to pull entries from (the directory holding literature.bib)
         repository: PathBuf,
         /// bibtex file to write
         output: PathBuf,
